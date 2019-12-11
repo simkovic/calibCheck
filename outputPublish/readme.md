@@ -1,0 +1,3 @@
+* Data files *
+* vpinfo.res: csv file contains metainformation about participants, columns are: 1 participant id, 2 cohort, 5 age, 6 id of the person in charge of experiment, the remaining columns are irrelevant for this study
+* lof files in good: csv file containing eye-tracking data. Filename consist of participant id ,cohort and tobii or smi eye-tracking device indicator. The columns are: 1 pc time, 2 eye tracker time, 4 left eye horizontal gaze position, 5 left eye vertical, 6 right eye horizontal, 7 right eye vertical, 8-9 left and right eye pupil diameter, 10-12 left eye position, 13-16 right eye position 
