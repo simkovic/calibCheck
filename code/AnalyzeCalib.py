@@ -7,7 +7,7 @@ MD=70 #monitor distance used to compute deg visual angle in the output files
 #position of calibration points
 CTRUEDEG=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],[0,-11]]) # true calibartion point locations in degrees
 CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion point locations in cm
-SEED=5
+SEED=5 # the seed of random number generator was fixed to make analyses replicable
 TC,TS,F,LX,LY,LD,RX,RY,RD,BX,BY,BD=range(12)
 DPATH='data'+os.path.sep  
 ##########################################################################
@@ -778,36 +778,36 @@ def tableSlope(fn):
     print('')  
 if __name__=='__main__': 
     import pickle
-    # loading and pre-processing
-    #fns=checkFiles()             
-    #D=loadCalibrationData(fns)
-    #with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
+    # loading and preprocessing
+    fns=checkFiles()             
+    D=loadCalibrationData(fns)
+    with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
     with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
     dataPreprocessing(D,'dsFixTh1_0',thacc=1.0)
     dataPreprocessing(D,'dsFixTh2Vel20minDur0_1',thacc=2,thvel=20,minDur=0.1) 
-    # estimation
+    # estimation (takes 3-4 days on i7 haswell CPU)
     computePA('FixTh1_0')
     computePA('FixTh2Vel20minDur0_1')
 
     computeVar('FixTh1_0',includePredictors=False)
     computeVar('FixTh1_0',includePredictors=True)
 
-    #tables from report
-    #tableSample('dsFixTh1_0incl.npy')
-    #res=tablePA('FixTh1_0',m=1)  
-    #figurePA(res,'acc')
-    #tableSlope('HADR1')
-    #tableVar('HADR1',correlation=False)
-    #tableVar('HADR0',correlation=False)
+    #tables and figures from report
+    tableSample('dsFixTh1_0incl.npy')
+    res=tablePA('FixTh1_0',m=1)  
+    figurePA(res,'acc')
+    tableSlope('HADR1')
+    tableVar('HADR1',correlation=False)
+    tableVar('HADR0',correlation=False)
 
-    #tables from supplement
-    #tableVar('HADR1',correlation=True)
-    #tableVar('HADR0',correlation=True)
+    #tables and figures from supplement
+    tableVar('HADR1',correlation=True)
+    tableVar('HADR0',correlation=True)
     
-    #res=tablePA('FixTh1_0',m=0)
-    #figurePA(res,'acc45')
-    #res=tablePA('FixTh1_0',m=1,novelLocations=True)
-    #figurePA(res,'accNovel')
-    #tableSample('dsFixTh2Vel20minDur0_1incl.npy') 
-    #res=tablePA('FixTh2Vel20minDur0_1',m=1)  
-    #figurePA(res,'accIncl')
+    res=tablePA('FixTh1_0',m=0)
+    figurePA(res,'acc45')
+    res=tablePA('FixTh1_0',m=1,novelLocations=True)
+    figurePA(res,'accNovel')
+    tableSample('dsFixTh2Vel20minDur0_1incl.npy') 
+    res=tablePA('FixTh2Vel20minDur0_1',m=1)  
+    figurePA(res,'accIncl')
