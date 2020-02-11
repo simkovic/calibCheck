@@ -5,10 +5,11 @@ from matusplotlib import ndarray2latextable,figure,subplot
 from scipy.stats import scoreatpercentile as sap
 MD=70 #monitor distance used to compute deg visual angle in the output files
 #position of calibration points
-CTRUEDEG=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],[0,-11]]) # true calibartion point locations in degrees
-CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion point locations in cm
+CTRUE=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],[0,-11]]) # true calibartion locations in degrees
+#CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion locations in cm
 SEED=5 # the seed of random number generator was fixed to make analyses replicable
-TC,TS,F,LX,LY,LD,RX,RY,RD,BX,BY,BD=range(12)
+TC,TS,F,LX,LY,RX,RY,BX,BY,LD=range(10); RD=12;BD=15
+
 DPATH='data'+os.path.sep  
 ##########################################################################
 # DATA LOADING ROUTINES
@@ -177,21 +178,21 @@ def loadCalibrationData(fns):
             for m in range(3):
                 d=[D[n][s+1][:9],D[n][s+1][9:14],D[n][s+1][14:19]][m]
                 for i in range(len(d)):
-                    assert(np.allclose(d[i][0,:2],CTRUEDEG[i,:]))
+                    assert(np.allclose(d[i][0,:2],CTRUE[i,:]))
             for p in range(len(D[n][s+1])):
                 D[n][s+1][p]= D[n][s+1][p][1:,:]
     # select discard data columns which are not needed
     for s in range(2):
         for n in range(len(D)):
             for p in range(len(D[n][s+1])):
-                temp=np.zeros((D[n][s+1][p].shape[0],12))*np.nan
-                temp[:,:5]=D[n][s+1][p][:,:5] #TC,TS,F,LX,LY
-                temp[:,LD]=D[n][s+1][p][:,11]
-                temp[:,RX:(RY+1)]=D[n][s+1][p][:,5:7]
-                temp[:,RD]=D[n][s+1][p][:,14]
+                temp=np.zeros((D[n][s+1][p].shape[0],18))*np.nan
+                temp[:,:7]=D[n][s+1][p][:,:7] #TC,TS,F,LX,LY,RX,RY
                 temp[:,BX]=np.nanmean(temp[:,[LX,RX]],axis=1)
                 temp[:,BY]=np.nanmean(temp[:,[LY,RY]],axis=1)
-                temp[:,BD]=np.nanmean(temp[:,[LD,RD]],axis=1)
+                temp[:,LD:(LD+3)]=D[n][s+1][p][:,9:12]
+                temp[:,RD:(RD+3)]=D[n][s+1][p][:,12:15]
+                a=np.array([temp[:,LD:(LD+3)],temp[:,RD:(RD+3)]])
+                temp[:,BD:(BD+3)]=np.nanmean(a,axis=0)
                 D[n][s+1][p]=temp
     age=[]
     for i in range(len(D)):
@@ -268,20 +269,45 @@ def intersection(intv,intvs):
             intvsout.append([max(i[0],intv[0]), min(i[1],intv[1])])
     return intvsout
     
-def extractFixations(inG,eye,thvel=10,hz=100,minDur=0.3): 
+def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0): 
+    def _chunits(inn,dva,i):
+        assert(i==0 or i==1)
+        cm=inn/180*np.pi*MD
+        if dva==0: x=cm #deg vis angle at 180/pi cm distance
+        elif dva==1: x=np.arctan(cm/57.5)/np.pi*180
+        elif dva==2: 
+            x=np.arctan((cm-np.nanmean(G[~sel,LD+i+3*eye],0))/
+                np.nanmean(G[~sel,LD+2+3*eye],0))/np.pi*180    
+        elif dva==3: 
+            x=np.arctan((cm-G[~sel,LD+i+3*eye])/
+                G[~sel,LD+2+3*eye])/np.pi*180
+        elif dva==4: #deg vis angle at 180/pi cm distance
+            x=57.5*(cm-G[~sel,LD+i%2+3*eye])/G[~sel,LD+2+3*eye] 
+        return x
+    
     G=np.concatenate(inG,0)
-    res=np.ones((9,3))*np.nan
+    C=[]
+    for i in range(len(inG)):
+        C.append(np.ones((inG[i].shape[0],2))*np.array(CTRUE[i]))
+    C=np.concatenate(C,0)
+    res=np.ones((9,7))*np.nan
     if G.shape[0]<3: return res 
     t=np.arange(G[0,0],G[-1,0],1/hz)[1:-1]
-    d=[t]
-    for i in [LX+3*eye,LY+3*eye,LD+3*eye]:
-        sel,discard=computeState(np.isnan(G[:,i]),G[:,0],maxDur=0.05)
-        if i==LD+3*eye: out=filterGaussian(G[~sel,0],G[~sel,i]/10,t,sigma=0.1)
-        else: out=filterGaussian(G[~sel,0],G[~sel,i]/180*np.pi*MD,t,sigma=0.1)
+    d=[t];
+    G[:,LD+3*eye:LD+3+3*eye]/=10 # mm to cm
+    G[:,LD+1+3*eye]-=16.45;G[:,LD+2+3*eye]+=2.5 # origin at screen center
+    for i in range(2):
+        ii=[LX+2*eye,LY+2*eye][i]
+        sel,discard=computeState(np.isnan(G[:,ii]),G[:,0],maxDur=0.05)
+        x=_chunits(G[~sel,ii],dva,i)
+        C[~sel,i]=_chunits(C[~sel,i],dva,i)
+        C[sel,i]=np.nan
+        d.append(filterGaussian(G[~sel,0],x,t,sigma=0.1))
         #out=filterGaussian(G[~sel,0],G[~sel,i],t,sigma=0.1,ignoreNanInterval=0.05)
-        d.append(out)
-    d=np.array(d).T 
-    vel=np.sqrt(np.square(np.diff(d[:,1:],axis=0)).sum(1))*hz
+    d=np.array(d).T
+    #plt.plot(d[:,0],d[:,1])
+    #plt.plot(d[:,0],d[:,3])
+    vel=np.sqrt(np.square(np.diff(d[:,1:3],axis=0)).sum(1))*hz
     temp=d[1:,0]/2+d[:-1,0]/2
     a,fix=computeState(vel<thvel,d[:,0],minDur=minDur,minGapDur=0.03)
     if len(fix)==0: return res
@@ -294,25 +320,36 @@ def extractFixations(inG,eye,thvel=10,hz=100,minDur=0.3):
             s=np.logical_and(se[0]<=t[1:],se[0]>=t[:-1]).nonzero()[0][0]+1
             #print(G[-1,0]-G[0,0],se[0]-G[0,0],se[1]-G[0,0]) 
             e=np.logical_and(se[1]<=t[1:],se[1]>=t[:-1]).nonzero()[-1][0]+1 
-            if e-s>0.1*hz: res[p,:]=np.nanmean(d[s:e,1:],0)
+            if e-s>0.1*hz: 
+                res[p,:2]=np.nanmean(d[s:e,1:],0)
+                ss=np.logical_and(se[0]<=G[1:,0],se[0]>=G[:-1,0]).nonzero()[0][0]+1
+                ee=np.logical_and(se[1]<=G[1:,0],se[1]>=G[:-1,0]).nonzero()[-1][0]+1 
+                res[p,4:]=np.nanmean(G[ss:ee,LD+3*eye:RD+3*eye],0)
+                res[p,2:4]=np.nanmean(C[ss:ee,:],0)
     return res  
     
 
-def dpworker(G,thacc,thvel,minDur):
+def dpworker(G,thacc,thvel,minDur,dva):
     '''
        G - gaze data
        minDur - minimum fixation duration
        thvel - velocity threshold for fixation identification
        thacc - accuracy threshold for discarding calibration location with poor data
-       retuns - gaze data at 100 Hz as ndarray with dimensions: 1. eye-tracking device 
+       dva - method for computation of degrees of visual angle, 
+            0- cm; 
+            1- visual angle constant head pos; 
+            2 - visual angle 
+       retuns - gaze data at 60 Hz as ndarray with dimensions: 1. eye-tracking device 
             2. calibration session 3. eye (L,R,B) 4. calibration location (see CTRUE)
             5. horizontal gaze, vertical gaze, eye distance
             - information about exclusion of calibration locations as ndarray
     '''
-    R=np.zeros((2,3,3,9,3))*np.nan
+    MINVALIDCL=[4,3,3]
+    R=np.zeros((2,3,3,9,7))*np.nan
     included=np.zeros((2,3,3,3,7),dtype=np.int32)
     coh=[7,7,7,7,0,7,7,1,7,7,2][G[0][1]]
     c=np.zeros((9,3))*np.nan
+    
     for s in range(2):
         for m in range(3):
             d=[G[1+s][:9],G[1+s][9:14],G[1+s][14:19]][m]              
@@ -323,21 +360,21 @@ def dpworker(G,thacc,thvel,minDur):
                     check=np.zeros(9,dtype=np.bool)
                     for p in range(min(check.size,len(d))):
                         check[p]=np.any(~np.isnan(d[p][:,[LX+2*i,LY+2*i]]))
-                    if check.sum()>[3,2,2][m]: 
+                    if check.sum()>=MINVALIDCL[m]: 
                         included[s,coh,m,i,1]=1
                         included[s,coh,m,i,0]=check.sum()
-                    c=extractFixations(d,i,thvel=thvel,minDur=minDur)
-                    if np.isnan(c[:,0]).sum()<=[5,6,6][m]:
+                    c=extractFixations(d,i,thvel=thvel,minDur=minDur,dva=dva)
+                    if np.isnan(c[:,0]).sum()<=(9-MINVALIDCL[m]):
                         included[s,coh,m,i,3]=1
                         included[s,coh,m,i,2]=(~np.isnan(c[:,0])).sum()
-                        cm=list(getCMsingle(c[:,:2].copy(),CTRUE.copy()))
+                        cm=list(getCMsingle(c[:,:2].copy(),c[:,2:4].copy()))
                         co=cm.copy()
-                        while np.isnan(co[2][:,0]).sum()<[5,6,6][m] and (co[1]>thacc):
+                        while np.isnan(co[2][:,0]).sum()<(9-MINVALIDCL[m]) and (co[1]>thacc):
                             ci=co.copy()
                             for k in range(9):
                                 if np.isnan(co[2][k,0]): continue
                                 cg=co[2].copy();cg[k,:]=np.nan
-                                res=list(getCMsingle(cg,CTRUE.copy()))
+                                res=list(getCMsingle(cg,c[:,2:4].copy()))
                                 if res[1]<ci[1]:ci=res
                             if ci[1]<co[1]: co=ci
                             else: break
@@ -350,10 +387,10 @@ def dpworker(G,thacc,thvel,minDur):
                     included[s,coh,m,i,5]=1
                     included[s,coh,m,i,4]=(~np.isnan(cm[2][:,0])).sum()
                 R[s,m,i,:,:2]=cm[2]
-                R[s,m,i,:,2]=c[:,2]
+                R[s,m,i,:,2:]=c[:,2:]
     return R,included 
     
-def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.3,verbose=False,ncpu=8):  
+def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.3,dva=0,verbose=False,ncpu=8):  
     ''' the processing code is in dpworker(), this is just a wrapper
         for parallel application of dpworker
     '''              
@@ -361,7 +398,7 @@ def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.3,verbose=False,ncpu=8):
     pool=Pool(ncpu)
     res=[]
     for n in range(len(D)):
-        temp=pool.apply_async(dpworker,[D[n],thacc,thvel,minDur])
+        temp=pool.apply_async(dpworker,[D[n],thacc,thvel,minDur,dva])
         res.append(temp)
     pool.close()  
     from time import time,sleep
@@ -377,7 +414,7 @@ def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.3,verbose=False,ncpu=8):
             prevdone=done
         sleep(1)
         if done==tot: break
-    ds=np.zeros((2,len(D),3,3,9,3))*np.nan
+    ds=np.zeros((2,len(D),3,3,9,7))*np.nan
     included=np.zeros((2,3,3,3,7),dtype=np.int32)
     for n in range(len(D)):
         #print(res[n].get())
@@ -430,14 +467,45 @@ def tableSample(fn):
     print(res.shape)
     ndarray2latextable(res,decim=0,hline=[0,3,6,9,12,15],
         nl=0,vline=[2,5,8,9,10,11,14,17]) 
-        
-def computePA(suf):
+def figureSample(fn,dev=0):
+    I=np.load(DPATH+fn+'.npy')
+    
+    CLRS=['0.3','0.5','0.7']#['k','gray','w']
+    xtcs=[]
+    plt.figure(figsize=(12,6),dpi=300)
+    for tp in range(2):
+        for coh in range(3):
+            ax=plt.subplot(2,3,3*tp+coh+1)
+            ax.set_axisbelow(True)
+            plt.grid(True,axis='y')
+            for dist in range(3):
+                plt.text(dist*4+1.5, -15,['55','45','65'][dist],horizontalalignment='center')
+                for e in range(3):
+                    xtcs.append(dist*4+e+0.5)
+                    for i in range(3):
+                        if tp==0: y=I[dev,coh,dist,e,2*i+1]
+                        else: y=I[dev,coh,dist,e,2*i]/I[dev,coh,dist,e,2*i+1]/[9,5,5][dist]*100
+                        plt.bar(dist*4+e,y,width=0.9-i*0.2,color=CLRS[i],align='edge')
+            ax.set_xticks(xtcs)
+            if tp==0:plt.ylim([0,90])
+            else: plt.ylim([0,100])
+            if coh: ax.set_yticklabels([])
+            else: plt.ylabel(['Number of included participants','Percentage of included calibration locations'][tp])
+            if tp==0:plt.title(['4 months','7 months','10 months'][coh])
+            ax.set_xticklabels(['L','R','B']*3)
+            
+    #plt.show()
+    plt.savefig('../publication/figs/%s.png'%fn,bbox_inches='tight')            
+                
+
+ 
+def computePA(suf,docompile=True):
     ''' computes accuracy estimates '''
     models=[]
     data='''data {
         int<lower=0> N;
         vector[2] y[N,5];
-        vector[2] x[5];
+        vector[2] c[N,5];
         real age[N];
         real dist[N,5];'''
     for k in range(4):
@@ -476,41 +544,46 @@ def computePA(suf):
             for (n in 1:N){{ {temp}
             for (p in 1:5){{
                 if (! is_nan(y[n,p][1]))
-                    x[p]~multi_normal(head(o{os},2)+{yslope}*y[n,p]{pred},{yvar});       
+                    c[n,p]~multi_normal(head(o{os},2)+{yslope}*y[n,p]{pred},{yvar});       
         }}}}}}'''
             models.append(data+pars+model)
     sms=[]
     print('Compiling models')
     iss=range(len(models))
-    for i in iss:
-        sms.append(pystan.StanModel(model_code=models[i]))
-        with open(DPATH+f'sm{i}.pkl', 'wb') as f: pickle.dump(sms[-1], f)
+    if docompile:
+        for i in iss:
+            sms.append(pystan.StanModel(model_code=models[i]))
+            with open(DPATH+f'sm{i}.pkl', 'wb') as f: pickle.dump(sms[-1], f)
     sms=[]
     for i in range(len(models)):
         with open(DPATH+f'sm{i}.pkl', 'rb') as f: temp=pickle.load(f)
         sms.append(temp)
     ds=np.load(DPATH+f'ds{suf}.npy')
     print('Compilation Finished, Fitting models')
-    for dev in range(2):
+    for dev in [0]:#TODO range(2)
         for eye in range(3):
             for m in range(2):
                 y=ds[dev,:,m+1,eye,:5,:2]
+                c=ds[dev,:,m+1,eye,:5,2:4]
                 sel=~np.all(np.isnan(y[:,:,0]),axis=1)
                 age=np.load(DPATH+'age.npy')[sel]
                 age=(age-210)/120
-                dist=ds[dev,:,m+1,eye,:5,2]
-                dist=(dist[sel,:]-55)/10
-                y=y[sel,:,:]
-                dat={'y':y,'N':y.shape[0],'x':CTRUE[:5,:],'age':age,'dist':dist}
+                dist=ds[dev,:,m+1,eye,:5,6]
+                dist=(dist[sel,:]-57.5)/10
+                #c=ds[dev,:,m+1,eye,:5,2:4]
+                dat={'y':y[sel,:,:],'N':sel.sum(),'c':c[sel,:],'age':age,'dist':dist}
                 for i in iss:
                     print(dev,eye,m,i)
                     fit = sms[i].sampling(data=dat,iter=6000,
                         chains=6,thin=10,warmup=3000,n_jobs=6,seed=SEED)
                     with open(DPATH+f'd{dev}e{eye}m{m}i{i}{suf}.stanfit','wb') as f: 
                         pickle.dump(fit,f,protocol=-1)               
-def tablePA(fn,m=1,novelLocations=False):
+def tablePA(fn,m=1,novelLocations=False,errorMetric=0):
     ''' prints code for latex table to console
-        table shows accuracy estimates '''
+        table shows accuracy estimates
+        errorMetric: 0 - euclidean metric
+            1- angular metric 
+    '''
     left=[]
     for e in range(2):#device
         for i in range(4): # eye
@@ -534,13 +607,14 @@ def tablePA(fn,m=1,novelLocations=False):
     AX=np.newaxis
     for dev in range(2):
         for i in range(16):
-            lrchat=np.zeros((2,203,9,2))*np.nan
+            lrchat=np.zeros((2,203,2,9,2))*np.nan
             for eye in range(4):
                 if eye<3:
                     with open(DPATH+f'sm{i}.pkl','rb') as f: sm=pickle.load(f)
                     try:
                         with open(DPATH+f'd{dev}e{eye}m{m}i{i}{fn}.stanfit','rb') as f: fit=pickle.load(f)
                     except: continue
+                    #print(fit);bla
                     smr=fit.summary()
                     sr=smr['summary'][:-1,-1]
                     inds=(sr>1.1).nonzero()[0]
@@ -561,23 +635,28 @@ def tablePA(fn,m=1,novelLocations=False):
                     age=np.load(DPATH+'age.npy')[sel]
                     age=(age-210)/120
                     y=ds[dev,sel,0,eye,:,:2]
-                    dist=ds[dev,:,0,eye,:,2]
-                    dist=(dist[sel,:]-55)/10
+                    ctrue=ds[dev,sel,0,eye,:,2:4]
+                    dist=ds[dev,:,0,eye,:,6]
+                    dist=(dist[sel,:]-57.5)/10
                     chat= o[:,AX,:2]+slope*y
                     if 'ady' in w.keys(): 
                         ady=np.mean(w['ady'],0)
                         chat+= (ady[AX,AX,:]* dist[:,:,AX])
-                    if eye<2: lrchat[eye,sel,:,:]=chat
+                    if eye<2: 
+                        lrchat[eye,sel,0,:,:]=chat
+                        lrchat[eye,sel,1,:,:]=ctrue
                 elif eye==3: 
-                    chat=np.nanmean(lrchat,axis=0)
+                    chat=np.nanmean(lrchat[:,:,0,:,:],axis=0)
                     sel=~np.all(np.isnan(chat[:,:,0]),axis=1)
                     chat=chat[sel,:,:]
+                    ctrue=np.nanmean(lrchat[:,sel,1,:,:],axis=0)
                 if np.all(np.isnan(chat)):
                     res[1+dev*4+eye,2+i]='-';continue
-                eta=CTRUE[np.newaxis,:,:]-chat
+                eta=ctrue-chat
                 
                 #a=(0,1,3,4)
-                temp=np.sqrt(np.sum(np.square(eta),axis=2))
+                if errorMetric==0: temp=np.sqrt(np.sum(np.square(eta),axis=2))
+                elif errorMetric==1: temp=np.arctan(np.sqrt(np.sum(np.square(np.tan(eta)),axis=2))) 
                 if novelLocations: temp=np.nanmean(temp[:,5:],axis=1)
                 else: temp=np.nanmean(temp[:,:5],axis=1)
                 mm=np.nanmean(temp);se=np.sqrt(np.nanvar(temp)/(~np.isnan(temp)).sum())
@@ -779,12 +858,25 @@ def tableSlope(fn):
 if __name__=='__main__': 
     import pickle
     # loading and preprocessing
-    fns=checkFiles()             
-    D=loadCalibrationData(fns)
-    with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
-    with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
-    dataPreprocessing(D,'dsFixTh1_0',thacc=1.0)
-    dataPreprocessing(D,'dsFixTh2Vel20minDur0_1',thacc=2,thvel=20,minDur=0.1) 
+    #fns=checkFiles()             
+    #D=loadCalibrationData(fns)
+    #with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
+
+    #with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
+    #for i in range(5):
+    #    dataPreprocessing(D,f'dsFixTh1_0dva{i}',thacc=1.0,dva=i)
+    #    figureSample(f'dsFixTh1_0dva{i}incl');
+
+    #computePA('FixTh1_0dva0',docompile=False)
+    #computePA('FixTh1_0dva2',docompile=False)
+    #computePA('FixTh1_0dva1',docompile=False)
+    #computePA('FixTh1_0dva3',docompile=False)
+    #computePA('FixTh1_0dva4',docompile=False)
+    res=tablePA('FixTh1_0dva0',m=0)  
+    figurePA(res,'accDva0')
+    bla
+    #dataPreprocessing(D,'dsFixTh1_0',thacc=1.0)
+    #dataPreprocessing(D,'dsFixTh2Vel20minDur0_1',thacc=2,thvel=20,minDur=0.1) 
     # estimation (takes 3-4 days on i7 haswell CPU)
     computePA('FixTh1_0')
     computePA('FixTh2Vel20minDur0_1')
@@ -793,7 +885,8 @@ if __name__=='__main__':
     computeVar('FixTh1_0',includePredictors=True)
 
     #tables and figures from report
-    tableSample('dsFixTh1_0incl.npy')
+    #tableSample('dsFixTh1_0incl.npy')
+    figureSample('dsFixTh1_0incl');
     res=tablePA('FixTh1_0',m=1)  
     figurePA(res,'acc')
     tableSlope('HADR1')
