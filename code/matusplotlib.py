@@ -19,8 +19,9 @@ CLR=(0.2, 0.5, 0.6)
 # size of figure columns
 FIGCOL=[3.27,4.86,6.83] # plosone
 FIGCOL=[3.3,5, 7.1] # frontiers
-FIGCOL=[2.87,4.3,5.74]# peerj
 FIGCOL=[3.3,5,7.1] # plosone new
+FIGCOL=[2.87,4.3,5.74,9]# peerj
+
 
 SMALL=6
 MEDIUM=9
