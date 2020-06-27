@@ -5,9 +5,9 @@ from matusplotlib import ndarray2latextable,figure,subplot
 from scipy.stats import scoreatpercentile as sap
 MD=70 #monitor distance used to compute deg visual angle in the output files
 #position of calibration points
-CTRUE=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],[0,-11]]) # true calibartion locations in degrees
+CTRUE=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],[0,-11]]) # true calibration locations in degrees
 #CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion locations in cm
-SEED=5 # the seed of random number generator was fixed to make analyses replicable
+SEED=5 # the seed of random number generator was fixed to make the analyses replicable
 TC,TS,F,LX,LY,RX,RY,BX,BY,LD=range(10); RD=12;BD=15
 
 DPATH='data'+os.path.sep  
@@ -282,6 +282,8 @@ def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0):
                 G[~sel,LD+2+3*eye])/np.pi*180
         elif dva==4: #deg vis angle at 180/pi cm distance
             x=57.5*(cm-G[~sel,LD+i%2+3*eye])/G[~sel,LD+2+3*eye] 
+        elif dva==5 or dva==6 or dva==7:
+            x=np.arctan(cm/[57.5,47.5,67.5][dva-5])/np.pi*180
         return x
     
     G=np.concatenate(inG,0)
@@ -304,11 +306,11 @@ def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0):
         d.append(filterGaussian(G[~sel,0],x,t,sigma=0.1))
         #out=filterGaussian(G[~sel,0],G[~sel,i],t,sigma=0.1,ignoreNanInterval=0.05)
     d=np.array(d).T
-    #plt.plot(d[:,0],d[:,1])
-    #plt.plot(d[:,0],d[:,3])
+    #np.save('e',d)
     vel=np.sqrt(np.square(np.diff(d[:,1:3],axis=0)).sum(1))*hz
     temp=d[1:,0]/2+d[:-1,0]/2
     a,fix=computeState(vel<thvel,d[:,0],minDur=minDur,minGapDur=0.03)
+    #np.save('f',fix)
     if len(fix)==0: return res
     for p in range(len(inG)):
         if inG[p].shape[0]==0:continue
@@ -325,6 +327,7 @@ def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0):
                 ee=np.logical_and(se[1]<=G[1:,0],se[1]>=G[:-1,0]).nonzero()[-1][0]+1 
                 res[p,4:]=np.nanmean(G[ss:ee,LD+3*eye:RD+3*eye],0)
                 res[p,2:4]=np.nanmean(C[ss:ee,:],0)
+    #np.save('g',res)
     return res  
     
 
@@ -362,7 +365,10 @@ def dpworker(G,thacc,thvel,minDur,dva):
                     if check.sum()>=MINVALIDCL[m]: 
                         included[s,coh,m,i,1]=1
                         included[s,coh,m,i,0]=check.sum()
-                    c=extractFixations(d,i,thvel=thvel,minDur=minDur,dva=dva)
+                    #np.save('d',d)
+                    if dva==5: dva2=dva+m
+                    else:dva2=dva
+                    c=extractFixations(d,i,thvel=thvel,minDur=minDur,dva=dva2)
                     if np.isnan(c[:,0]).sum()<=(9-MINVALIDCL[m]):
                         included[s,coh,m,i,3]=1
                         included[s,coh,m,i,2]=(~np.isnan(c[:,0])).sum()
@@ -611,8 +617,10 @@ def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
     ds=np.load(DPATH+f'ds{fn}dva{dva}.npy')
     
     AX=np.newaxis
+    lracc=np.zeros((2,203))*np.nan
     for i in range(16):
         lrchat=np.zeros((2,203,9,7))*np.nan
+        
         for eye in range(4):
             if eye<3:
                 with open(DPATH+f'sm{i}.pkl','rb') as f: sm=pickle.load(f)
@@ -628,7 +636,7 @@ def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
                     if eye==0: lchat=np.nan
                     elif eye==1: rchat=np.nan
                     res[1+eye,2+i]='-';continue
-                else: print(dev,eye,top[2+i],'CONVERGED') 
+                else: print(dev,eye,i,top[2+i],'CONVERGED') 
                 #print(f'd{dev}e{eye}m{m}i{i}',len(inds))
                 w=fit.extract()
                 o=np.mean(w['o'],axis=0)
@@ -675,10 +683,11 @@ def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
             #    ctruecm=chatcm=np.tan(ctrue/180*np.pi)*57.5
             #    tempcm=np.sqrt(np.sum(np.square(ctruecm-chatcm),axis=2))
             #    temp=np.arctan(tempcm/57.5)/np.pi*180
-            elif dva==1 or dva==2 or dva==3:
+            elif dva==1 or dva==2 or dva==3 or dva==5:
                 if dva==1:ddd=np.array([0,0,57.5])[AX,AX,AX,:] 
                 elif dva==2:ddd=np.nanmean(dsd,1)[:,AX,AX,:]
                 elif dva==3:ddd=dsd[:,:,AX,:]
+                elif dva==5: ddd=np.array([0,0,[57.5,47.5,67.5][m+1]])[AX,AX,AX,:] 
                 
                 chatcm=np.tan(chat/180*np.pi)*ddd[:,:,:,2]+ddd[:,:,0,:2]
                 ctruecm=np.tan(ctrue/180*np.pi)*ddd[:,:,:,2]+ddd[:,:,0,:2]
@@ -690,24 +699,29 @@ def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
                 elif units=='cm': temp=np.sqrt(tempcm2)
             if novelLocations: temp=np.nanmean(temp[:,5:],axis=1)
             else: temp=np.nanmean(temp[:,:5],axis=1)
+            if eye<2: lracc[eye,sel]=temp
             sel=np.isnan(temp) 
             mm=np.nanmean(temp);se=np.sqrt(np.nanvar(temp)/(~np.isnan(temp)).sum())
             res[1+eye,2+i]='\\textbf{%.2f} (%.2f,%.2f)'%(mm,mm-1.96*se,mm+1.96*se)
             resout[1+eye,2+i,5]=mm; resout[1+eye,2+i,6]=se 
             resout[1+eye,2+i,:5]=list(map(lambda x: sap(temp[~sel],x),qntls))
-            
+        #np.save('lracc',lracc)
+        temp=lracc[1,:]-lracc[0,:]
+        sel=np.isnan(temp) 
+        mm=np.nanmean(temp);se=np.sqrt(np.nanvar(temp)/(~np.isnan(temp)).sum())
+        print(top[2+i],'acc right eye - acc left eye: m= %.3f, 95p CI (%.3f,%.3f), r=%.3f'%(mm,mm-1.96*se,mm+1.96*se, np.corrcoef(lracc[1,~sel],lracc[0,~sel])[0,1]))      
     sel=resout==''
     resout[sel]=np.nan
     if plot>0:
         suf=['','N'][int(novelLocations)]
         ffn=pref+['Tob','Smi'][dev]+['55','45','65'][m+1]+f'Dva{dva}{units}{suf}'
-        figureAccuracy(resout,ffn,short=plot==2,legend=legend)
+        figureAccuracy(resout,ffn,short=plot==2,legend=legend,dev=dev)
     else: 
         ndarray2latextable(res.T,decim=0,hline=[1,5,9,13],nl=1); 
         return resout
 
 
-def figureAccuracy(res,fn,short=False,legend=False):
+def figureAccuracy(res,fn,short=False,legend=False,dev=0):
     ''' plots accuracy estimates'''
     plt.close('all')
     if short: res=res[:,[0,1,3,7,11,15],:]
@@ -746,7 +760,7 @@ def figureAccuracy(res,fn,short=False,legend=False):
     plt.ylim([0,5])
     plt.grid(True,axis='y')
     #if not k: plt.xlabel('LC model')
-    plt.ylabel('Accuracy in degrees')
+    plt.ylabel(['Tobii X3 120','SMI Redn'][dev]+'\nAccuracy in degrees')
     if legend:plt.legend(handles[::-1],lbls[::-1],loc=1)
     #plt.title(['Tobii X3 120','SMI Redn'][k])
     plt.savefig('../publication/figs/%s.png'%fn,bbox_inches='tight') 
@@ -773,8 +787,8 @@ def computeVar(fn,includePredictors=True,dev=None,dva=0,doCompile=True):
         corr_matrix[3] rm;
         vector<lower=-100,upper=100>[3] mm;'''+['','''
         vector<lower=-100,upper=100>[3] nam;
-        vector<lower=0,upper=10>[2] nas;
         vector<lower=-100,upper=100>[2] odm;
+        vector<lower=0,upper=10>[2] nas;
         vector<lower=0,upper=10>[2] ods;
         vector<lower=0,upper=10>[2] mms;
     }transformed parameters{
@@ -782,6 +796,8 @@ def computeVar(fn,includePredictors=True,dev=None,dva=0,doCompile=True):
         tnas[1]=nas[1];tnas[2]=nas[2];tnas[3]=0;
         tmms[1]=mms[1];tmms[2]=mms[2];tmms[3]=0;'''][pred]+'''
     } model {
+        real cumo[3];
+        cumo[1]=0;cumo[2]=9;cumo[3]=14;
         sy~cauchy(0,20);
         so~cauchy(0,20);
         sm~cauchy(0,20);
@@ -789,7 +805,7 @@ def computeVar(fn,includePredictors=True,dev=None,dva=0,doCompile=True):
             mo[n]~multi_normal(mm'''+['','+nam*age[n]'][pred]+',quad_form_diag(rm,sm'+ \
             ['','+tnas*age[n]'][pred]+'''));
         for (m in 1:3){
-            o[n,m]~multi_normal(mo[n],quad_form_diag(ro,so+tmms*(m-2)));
+            o[n,m]~multi_normal(mo[n],quad_form_diag(ro,so'''+['','+tmms*(m-2)'][pred]+'''));
         for (p in 1:9){
             if (! is_nan(y[n,m,p][1]))
                 c[n,m,p]~multi_normal(segment(o[n,m],1,2)+o[n,m][3]*y[n,m,p]'''+ \
@@ -824,6 +840,7 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
         table includes variance estimates '''
      
     left=[]
+    from scipy.stats import scoreatpercentile as sap
     v=int(correlation)
     #for e in range(2):#device
     for i in range(3): # eye
@@ -847,6 +864,7 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
     e=dev#for e in range(2):# device
     resout=np.zeros((res.shape[0]-1,res.shape[1]-2,5))*np.nan
     qntls=[50,2.5,97.5,25,75]
+    totvar=[[],[],[]]
     for i in range(3): # eye
         try: 
             with open(DPATH+f'sm{fn}{e}{i}dva0.stanfit','rb') as f: fit=pickle.load(f)
@@ -870,6 +888,13 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
                 #if v==0 and d==2: tmp*=10# or v==1 and d>0:
                 res[1+l+3*i,2+d]='\\textbf{%.2f} (%.2f,%.2f)'%(np.median(tmp),sap(tmp,2.5),sap(tmp,97.5))
                 resout[l+3*i,d,:]=list(map(lambda x: sap(tmp,x),qntls))
+        if v: continue
+        totvar[i]=(np.square(w['sy']).sum(1)+np.square(w['so']).sum(1))
+        perc= np.square(w['so']).sum(1)/totvar[i]
+        print('eye %d perc. between-session var / tot var = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
+        print(f'tot accc=%.3f, (%.3f,%.3f)'%(sap(np.sqrt(totvar[i]),50),sap(np.sqrt(totvar[i]),2.5),sap(np.sqrt(totvar[i]),97.5)) )
+    accc=np.sqrt(totvar[0]/4+totvar[1]/4)
+    print(f'tot accc binoc=%.3f, (%.3f,%.3f)'%(sap(accc,50),sap(accc,2.5),sap(accc,97.5)) )
     ndarray2latextable(res,decim=0,hline=[0,3,6,9],nl=3);
     print('')  
     ffn='v'+['Hier','Pred'][int(fn[-1])]+['Tob','Smi'][dev]
@@ -879,6 +904,7 @@ def figureVar(dat,fnout):
     plt.close('all') 
     clrs=['g','r','y']
     handles=[]
+    print(fnout)
     figure(size=2,aspect=0.6,dpi=400)
     for a in range(2):
         for e in range(3):
@@ -967,7 +993,7 @@ def figureOverview():
     #dat=np.load('res.npy',allow_pickle=True)
     ordr=[4,2,3,0,5,6,1]
     dat=np.array(res)[ordr,:]
-    lbls=['Tobii 65cm','SMI 65cm','45cm','55cm','inclusive sample','deg. units A','deg. units B']
+    lbls=['Tobii 65 cm (Fig. 1)','SMI 65 cm (Fig. 1)','Tobii 45 cm (Fig. S5)','Tobii 55cm (Fig. S6)','inclusive sample (Fig. S8)','deg. units A (Fig. S9)','deg. units B (Fig. S10)']
     xs=np.arange(dat.shape[0])
     x=np.array([xs,xs])
     clr='b';ms=6
@@ -988,7 +1014,36 @@ def figureOverview():
     ax.set_yticklabels(np.array(lbls)[ordr])
     #plt.show()
     plt.savefig('../publication/figs/aSupp.png',bbox_inches='tight') 
-if __name__=='__main__': 
+def figurePreproc():
+    figure(size=3,aspect=0.4,dpi=400)
+    d=np.load('d.npy',allow_pickle=True)
+    raw=np.concatenate(d,0)
+    subplot(1,2,1)
+    plt.plot((raw[:,1]-raw[0,1])/1000000,raw[:,3])
+    plt.plot((raw[:,1]-raw[0,1])/1000000,raw[:,4])
+    plt.ylim([-30,50])
+    e=np.load('e.npy',allow_pickle=True)
+    e[:,0]-=e[0,0]
+    plt.xlabel('Time in seconds')
+    plt.ylabel('Location in degrees')
+    #plt.legend(['horizontal','vertical'],loc=1)
+    subplot(1,2,2)
+    plt.plot(e[:,0],e[:,1])
+    plt.plot(e[:,0],e[:,2])
+    #plt.ylabel('Location in degrees')
+    plt.xlabel('Time in seconds')
+    plt.ylim([-30,50])
+    f=np.load('f.npy')
+    k=0;h=0
+    val=[1,5,7,14,16,19,21]
+    for ff in f:
+        if e[ff[1],0]-e[ff[0],0]>0.1:
+            plt.plot([e[ff[0],0],e[ff[1],0]],[50-1*k,50-1*k],['r','g'][int(h in set(val))]);
+            k+=1
+        h+=1
+    plt.savefig('../publication/figs/preproc.png',bbox_inches='tight')
+     
+if __name__=='__main__':
     import pickle
     # loading and preprocessing
     fns=checkFiles()             
@@ -998,7 +1053,6 @@ if __name__=='__main__':
     with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
     dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
         thvel=20,dva=0,minDur=0.1)
-
     # estimate LC parameters (took appr. a week on i7 haswell CPU)
     computePA('FixTh1_0dva0',docompile=False)
     computePA('FixTh1_0dva0',docompile=False,short=True,dev=1)
@@ -1019,7 +1073,7 @@ if __name__=='__main__':
     figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
     figureSample(f'dsFixTh1_0dva0incl',dev=1);
 
-
+    figurePreproc()
     tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
     tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
     tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)

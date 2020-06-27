@@ -5,16 +5,21 @@ from psychopy.event import getKeys
 import os,warnings
 import numpy as np
 warnings.filterwarnings('ignore')
-from matustools.ExperimentManager import *
+from ExperimentManager import *
 
 
 
 class Q():
+    '''Experiment settings'''
+    expName='calib'
     monitor = asusMG279
     scale=1 #multiplier
-    bckgCLR= [-0.22,-0.26,-0.24]# [1 -1]
+    bckgCLR= [-0.22,-0.26,-0.24]#gray
     fullscr=True
     winPos=(0,0)
+    refreshRate=120 # hz
+    screen=0 # screen 0 shows experiment manager
+    stimOffset=np.array([0,0])
     ###############################################
     from os import getcwd as __getcwd
     __path = __getcwd()
@@ -25,7 +30,8 @@ class Q():
     outputPath=__path+"output"+__sep
     
 
-def infoboxCalib(pos,writeInfo=False):
+def infoboxCalib(pos,fn):
+    '''Get metadata at the start of experiment'''
     import datetime
     from psychopy import gui          
     myDlg = gui.Dlg(title='VP Info',pos=pos)    
@@ -50,39 +56,19 @@ def infoboxCalib(pos,writeInfo=False):
         
 class Experiment():
     def __init__(self):
-        self.f=-1;title='calib'
-        self.vp,cohort,self.slot,suffix=infoboxCalib((0,0))
-        #self.infpath=Qpursuit01.inputPath+title+cohort+'.sched'
-        Qsave(Q,title+suffix)
-        self.win=QinitDisplay(Q)
-        self.EM=ExperimentManager(ofpath=Q.outputPath+title+suffix,
-            ecallback=self.controlCallback,fcallback=lambda: 0,slot=self.slot,
-            winE=self.win,monDist=Q.monitor.getDistance())
-        self.showAC=False
-        self.jumpToEnd=False
-        #init vars
+        self.EM=ExperimentManager(ecallback=lambda x: 0,fcallback=lambda: 0,
+            Qexp=Q,loglevel=1,infobox=infoboxCalib)
         self.EM.start()
-    def controlCallback(self,command):
-        if command==2:
-            self.showAC=True
-        elif command==-1: 
-            self.jumpToEnd=True
         
     def run(self):
         from PIL import Image
-        #self.win.flip()
+        self.EM.winE.flip()
         dists=[55,45,65]
         for dist in dists:
-            if self.jumpToEnd: break
-            print('Eyetracker: '+['smi','tobii'][self.slot]+
-                ', Entfernung: %d, Hohe: -10'%dist)
+            print('Entfernung: %d, Hohe: -10'%dist)
             self.EM.ep1=np.array(Image.open(Q.inputPath+'ep%d.png'%dist))[:,:,:3]
-            self.EM.showAC()
             self.EM.calibrate(ncalibpoints=[5,9][dist==dists[0]])
-        if self.EM.terminate() and self.vp>0:
-            writeInfoFile(',-1')
-        else:  writeInfoFile(',-1')
-        self.win.close()
+        self.EM.terminate()
         core.quit()
           
             
