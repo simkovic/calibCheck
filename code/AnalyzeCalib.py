@@ -272,7 +272,7 @@ def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0):
     def _chunits(inn,dva,i):
         assert(i==0 or i==1)
         cm=inn/180*np.pi*MD
-        if dva==0: x=cm #deg vis angle at 180/pi cm distance
+        if dva==0: x=cm 
         elif dva==1: x=np.arctan(cm/57.5)/np.pi*180
         elif dva==2: 
             x=np.arctan((cm-np.nanmean(G[~sel,LD+i+3*eye],0))/
@@ -280,7 +280,7 @@ def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0):
         elif dva==3: 
             x=np.arctan((cm-G[~sel,LD+i+3*eye])/
                 G[~sel,LD+2+3*eye])/np.pi*180
-        elif dva==4: #deg vis angle at 180/pi cm distance
+        elif dva==4: 
             x=57.5*(cm-G[~sel,LD+i%2+3*eye])/G[~sel,LD+2+3*eye] 
         elif dva==5 or dva==6 or dva==7:
             x=np.arctan(cm/[57.5,47.5,67.5][dva-5])/np.pi*180
@@ -339,8 +339,11 @@ def dpworker(G,thacc,thvel,minDur,dva):
        thacc - accuracy threshold for discarding calibration location with poor data
        dva - method for computation of degrees of visual angle, 
             0- cm; 
-            1- visual angle constant head pos; 
-            2 - visual angle 
+            1- visual angle based on constant head distance of 57.5; 
+            2- visual angle based on empirical head distance: session mean
+            3- visual angle based on empirical head distance: calibration location mean
+            4- cm computed from angle as in (3) and constant distance 57.5
+            5,6,7 - visual angle based on nominal starting distance (5=57.5,6=47.5,7=67.5)
        retuns - gaze data at 60 Hz as ndarray with dimensions: 1. eye-tracking device 
             2. calibration session 3. eye (L,R,B) 4. calibration location (see CTRUE)
             5. horizontal gaze, vertical gaze, eye distance
