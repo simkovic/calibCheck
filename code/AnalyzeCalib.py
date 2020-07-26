@@ -1047,45 +1047,44 @@ def figurePreproc():
     plt.savefig('../publication/figs/preproc.png',bbox_inches='tight')
      
 if __name__=='__main__':
-    if False:
-        import pickle
-        # loading and preprocessing
-        fns=checkFiles()             
-        D=loadCalibrationData(fns)
-        with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
+    import pickle
+    # loading and preprocessing
+    fns=checkFiles()             
+    D=loadCalibrationData(fns)
+    with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
 
-        with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
-        dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
-            thvel=20,dva=0,minDur=0.1)
-        # estimate LC parameters (took appr. a week on i7 haswell CPU)
-        computePA('FixTh1_0dva0',docompile=False)
-        computePA('FixTh1_0dva0',docompile=False,short=True,dev=1)
-        computePA('FixTh1_0dva0',docompile=False,short=True,m=-1,dev=0)
-        computePA('FixTh2Vel20minDur0_1dva0',docompile=False,short=True,dev=0)
-        computePA('FixTh1_0dva2',docompile=False,short=True)
-        computePA('FixTh1_0dva1',docompile=False,short=True)
-        computePA('FixTh1_0dva4',docompile=False,short=True)
-        computePA('FixTh1_0dva3',docompile=False,short=True)
-        # estimate variance with three-level model
-        computeVar('FixTh1_0',dva=0,dev=0,includePredictors=False,doCompile=False)
-        computeVar('FixTh1_0',dva=4,dev=0,includePredictors=True,doCompile=False)
-        computeVar('FixTh1_0',dva=0,dev=0,includePredictors=True,doCompile=False)
-        computeVar('FixTh1_0',dva=0,dev=1,includePredictors=False,doCompile=False)
+    with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
+    dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
+        thvel=20,dva=0,minDur=0.1)
+    # estimate LC parameters (took appr. a week on i7 haswell CPU)
+    computePA('FixTh1_0dva0',docompile=False)
+    computePA('FixTh1_0dva0',docompile=False,short=True,dev=1)
+    computePA('FixTh1_0dva0',docompile=False,short=True,m=-1,dev=0)
+    computePA('FixTh2Vel20minDur0_1dva0',docompile=False,short=True,dev=0)
+    computePA('FixTh1_0dva2',docompile=False,short=True)
+    computePA('FixTh1_0dva1',docompile=False,short=True)
+    computePA('FixTh1_0dva4',docompile=False,short=True)
+    computePA('FixTh1_0dva3',docompile=False,short=True)
+    # estimate variance with three-level model
+    computeVar('FixTh1_0',dva=0,dev=0,includePredictors=False,doCompile=False)
+    computeVar('FixTh1_0',dva=4,dev=0,includePredictors=True,doCompile=False)
+    computeVar('FixTh1_0',dva=0,dev=0,includePredictors=True,doCompile=False)
+    computeVar('FixTh1_0',dva=0,dev=1,includePredictors=False,doCompile=False)
 
-        # figures  
-        figureSample(f'dsFixTh1_0dva0incl',dev=0)
-        figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
-        figureSample(f'dsFixTh1_0dva0incl',dev=1);
+    # figures  
+    figureSample(f'dsFixTh1_0dva0incl',dev=0)
+    figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
+    figureSample(f'dsFixTh1_0dva0incl',dev=1);
 
-        figurePreproc()
-        tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
-        tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
-        tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)
-        tablePA('FixTh1_0',m=-1,dva=0,dev=0,plot=2,novelLocations=True)
-        tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=1,pref='aL')
-        tablePA('FixTh2Vel20minDur0_1',m=1,dev=0,plot=2,pref='aP')
-        tablePA('FixTh1_0',m=1,dva=3,dev=0,plot=2) 
-        tablePA('FixTh1_0',m=1,dva=1,dev=0,plot=2) 
+    figurePreproc()
+    tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
+    tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
+    tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)
+    tablePA('FixTh1_0',m=-1,dva=0,dev=0,plot=2,novelLocations=True)
+    tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=1,pref='aL')
+    tablePA('FixTh2Vel20minDur0_1',m=1,dev=0,plot=2,pref='aP')
+    tablePA('FixTh1_0',m=1,dva=3,dev=0,plot=2) 
+    tablePA('FixTh1_0',m=1,dva=1,dev=0,plot=2) 
     tableVar('HADR0',correlation=False,dev=1)
     tableVar('HADR0',correlation=False,dev=0)
     figureOverview() 
