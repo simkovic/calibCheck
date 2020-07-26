@@ -9,7 +9,7 @@ CTRUE=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],
 #CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion locations in cm
 SEED=5 # the seed of random number generator was fixed to make the analyses replicable
 TC,TS,F,LX,LY,RX,RY,BX,BY,LD=range(10); RD=12;BD=15
-
+DPI=500 #figure resolution
 DPATH='data'+os.path.sep  
 ##########################################################################
 # DATA LOADING ROUTINES
@@ -480,7 +480,7 @@ def figureSample(fn,dev=0):
     
     CLRS=['0.3','0.5','0.7']#['k','gray','w']
     xtcs=[]
-    figure(size=3,aspect=0.6,dpi=400)
+    figure(size=3,aspect=0.6,dpi=DPI)
     for tp in range(2):
         for coh in range(3):
             ax=subplot(2,3,3*tp+coh+1)
@@ -728,9 +728,9 @@ def figureAccuracy(res,fn,short=False,legend=False,dev=0):
     ''' plots accuracy estimates'''
     plt.close('all')
     if short: res=res[:,[0,1,3,7,11,15],:]
-    clrs=['g','r','y','b']
-    if short: figure(size=2,aspect=0.8,dpi=400)
-    else: figure(size=4,aspect=0.7,dpi=400)
+    clrs=['g','c','y','b']
+    if short: figure(size=2,aspect=0.8,dpi=DPI)
+    else: figure(size=4,aspect=0.7,dpi=DPI)
     #else: plt.figure(figsize=(12,4),dpi=400)
     xs= np.arange(res.shape[1]-2)*0.7
     lbls=['prediction avg.','data avg.','right eye','left eye']
@@ -896,7 +896,7 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
         perc= np.square(w['so']).sum(1)/totvar[i]
         print('eye %d perc. between-session var / tot var = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
         print(f'tot accc=%.3f, (%.3f,%.3f)'%(sap(np.sqrt(totvar[i]),50),sap(np.sqrt(totvar[i]),2.5),sap(np.sqrt(totvar[i]),97.5)) )
-    accc=np.sqrt(totvar[0]/4+totvar[1]/4)
+    accc=np.sqrt(np.array(totvar[0])/4+np.array(totvar[1])/4)
     print(f'tot accc binoc=%.3f, (%.3f,%.3f)'%(sap(accc,50),sap(accc,2.5),sap(accc,97.5)) )
     ndarray2latextable(res,decim=0,hline=[0,3,6,9],nl=3);
     print('')  
@@ -905,10 +905,10 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
     figureVar(resout,ffn)
 def figureVar(dat,fnout):
     plt.close('all') 
-    clrs=['g','r','y']
+    clrs=['g','c','y']
     handles=[]
     print(fnout)
-    figure(size=2,aspect=0.6,dpi=400)
+    figure(size=2,aspect=0.6,dpi=DPI)
     for a in range(2):
         for e in range(3):
             xs=4*np.arange(3)+e+a*12#-0.25
@@ -986,7 +986,7 @@ def tableSlope(fn,dev=0):
     print('')  
     
 def figureOverview():
-    figure(size=3,aspect=0.4,dpi=400)
+    figure(size=3,aspect=0.4,dpi=DPI)
     pms=[[0,1,0,0,0],[0,1,0,1,0],[0,0,0,0,0],[0,-1,0,0,1],[1,1,0,0,0],[0,1,1,0,0],[0,1,3,0,0]]
     res=[]
     for pm in pms:
@@ -1018,14 +1018,14 @@ def figureOverview():
     #plt.show()
     plt.savefig('../publication/figs/aSupp.png',bbox_inches='tight') 
 def figurePreproc():
-    figure(size=3,aspect=0.4,dpi=400)
-    d=np.load('d.npy',allow_pickle=True)
+    figure(size=3,aspect=0.4,dpi=DPI)
+    d=np.load(DPATH+'d.npy',allow_pickle=True)
     raw=np.concatenate(d,0)
     subplot(1,2,1)
     plt.plot((raw[:,1]-raw[0,1])/1000000,raw[:,3])
     plt.plot((raw[:,1]-raw[0,1])/1000000,raw[:,4])
     plt.ylim([-30,50])
-    e=np.load('e.npy',allow_pickle=True)
+    e=np.load(DPATH+'e.npy',allow_pickle=True)
     e[:,0]-=e[0,0]
     plt.xlabel('Time in seconds')
     plt.ylabel('Location in degrees')
@@ -1036,7 +1036,7 @@ def figurePreproc():
     #plt.ylabel('Location in degrees')
     plt.xlabel('Time in seconds')
     plt.ylim([-30,50])
-    f=np.load('f.npy')
+    f=np.load(DPATH+'f.npy')
     k=0;h=0
     val=[1,5,7,14,16,19,21]
     for ff in f:
@@ -1047,44 +1047,45 @@ def figurePreproc():
     plt.savefig('../publication/figs/preproc.png',bbox_inches='tight')
      
 if __name__=='__main__':
-    import pickle
-    # loading and preprocessing
-    fns=checkFiles()             
-    D=loadCalibrationData(fns)
-    with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
+    if False:
+        import pickle
+        # loading and preprocessing
+        fns=checkFiles()             
+        D=loadCalibrationData(fns)
+        with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
 
-    with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
-    dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
-        thvel=20,dva=0,minDur=0.1)
-    # estimate LC parameters (took appr. a week on i7 haswell CPU)
-    computePA('FixTh1_0dva0',docompile=False)
-    computePA('FixTh1_0dva0',docompile=False,short=True,dev=1)
-    computePA('FixTh1_0dva0',docompile=False,short=True,m=-1,dev=0)
-    computePA('FixTh2Vel20minDur0_1dva0',docompile=False,short=True,dev=0)
-    computePA('FixTh1_0dva2',docompile=False,short=True)
-    computePA('FixTh1_0dva1',docompile=False,short=True)
-    computePA('FixTh1_0dva4',docompile=False,short=True)
-    computePA('FixTh1_0dva3',docompile=False,short=True)
-    # estimate variance with three-level model
-    computeVar('FixTh1_0',dva=0,dev=0,includePredictors=False,doCompile=False)
-    computeVar('FixTh1_0',dva=4,dev=0,includePredictors=True,doCompile=False)
-    computeVar('FixTh1_0',dva=0,dev=0,includePredictors=True,doCompile=False)
-    computeVar('FixTh1_0',dva=0,dev=1,includePredictors=False,doCompile=False)
+        with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
+        dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
+            thvel=20,dva=0,minDur=0.1)
+        # estimate LC parameters (took appr. a week on i7 haswell CPU)
+        computePA('FixTh1_0dva0',docompile=False)
+        computePA('FixTh1_0dva0',docompile=False,short=True,dev=1)
+        computePA('FixTh1_0dva0',docompile=False,short=True,m=-1,dev=0)
+        computePA('FixTh2Vel20minDur0_1dva0',docompile=False,short=True,dev=0)
+        computePA('FixTh1_0dva2',docompile=False,short=True)
+        computePA('FixTh1_0dva1',docompile=False,short=True)
+        computePA('FixTh1_0dva4',docompile=False,short=True)
+        computePA('FixTh1_0dva3',docompile=False,short=True)
+        # estimate variance with three-level model
+        computeVar('FixTh1_0',dva=0,dev=0,includePredictors=False,doCompile=False)
+        computeVar('FixTh1_0',dva=4,dev=0,includePredictors=True,doCompile=False)
+        computeVar('FixTh1_0',dva=0,dev=0,includePredictors=True,doCompile=False)
+        computeVar('FixTh1_0',dva=0,dev=1,includePredictors=False,doCompile=False)
 
-    # figures  
-    figureSample(f'dsFixTh1_0dva0incl',dev=0)
-    figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
-    figureSample(f'dsFixTh1_0dva0incl',dev=1);
+        # figures  
+        figureSample(f'dsFixTh1_0dva0incl',dev=0)
+        figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
+        figureSample(f'dsFixTh1_0dva0incl',dev=1);
 
-    figurePreproc()
-    tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
-    tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
-    tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)
-    tablePA('FixTh1_0',m=-1,dva=0,dev=0,plot=2,novelLocations=True)
-    tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=1,pref='aL')
-    tablePA('FixTh2Vel20minDur0_1',m=1,dev=0,plot=2,pref='aP')
-    tablePA('FixTh1_0',m=1,dva=3,dev=0,plot=2) 
-    tablePA('FixTh1_0',m=1,dva=1,dev=0,plot=2) 
+        figurePreproc()
+        tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
+        tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
+        tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)
+        tablePA('FixTh1_0',m=-1,dva=0,dev=0,plot=2,novelLocations=True)
+        tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=1,pref='aL')
+        tablePA('FixTh2Vel20minDur0_1',m=1,dev=0,plot=2,pref='aP')
+        tablePA('FixTh1_0',m=1,dva=3,dev=0,plot=2) 
+        tablePA('FixTh1_0',m=1,dva=1,dev=0,plot=2) 
     tableVar('HADR0',correlation=False,dev=1)
     tableVar('HADR0',correlation=False,dev=0)
     figureOverview() 
