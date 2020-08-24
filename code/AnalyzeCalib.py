@@ -268,24 +268,59 @@ def intersection(intv,intvs):
             intvsout.append([max(i[0],intv[0]), min(i[1],intv[1])])
     return intvsout
     
-def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0): 
-    def _chunits(inn,dva,i):
-        assert(i==0 or i==1)
-        cm=inn/180*np.pi*MD
-        if dva==0: x=cm 
-        elif dva==1: x=np.arctan(cm/57.5)/np.pi*180
-        elif dva==2: 
-            x=np.arctan((cm-np.nanmean(G[~sel,LD+i+3*eye],0))/
-                np.nanmean(G[~sel,LD+2+3*eye],0))/np.pi*180    
-        elif dva==3: 
-            x=np.arctan((cm-G[~sel,LD+i+3*eye])/
-                G[~sel,LD+2+3*eye])/np.pi*180
-        elif dva==4: 
-            x=57.5*(cm-G[~sel,LD+i%2+3*eye])/G[~sel,LD+2+3*eye] 
-        elif dva==5 or dva==6 or dva==7:
-            x=np.arctan(cm/[57.5,47.5,67.5][dva-5])/np.pi*180
-        return x
+def eucldunits(ctrue,chat,dsd,dva):
+    ''' translate to cm compute euclidean distance and translate back 
+        to units 
+        ctrue - calib. target position
+        chat - predicted position
+        dsd - screen-to-eye distance
+        dva - type of unit computation'''
+
+    if dva<=0 or dva==4: 
+        tempcm=np.sqrt(np.sum(np.square(ctrue-chat),axis=2))
+        if dva<0: return tempcm
+        ctruecm=ctrue+dsd[:,:,:2];chatcm=chat+dsd[:,:,:2];
+        dctrue2=np.sum(np.square(ctruecm),axis=2)+np.square(dsd[:,:,2])
+        dchat2=np.sum(np.square(chatcm),axis=2)+np.square(dsd[:,:,2])
+        temp=np.arccos((dctrue2+dchat2-np.square(tempcm))/2/
+            np.sqrt(dctrue2*dchat2))/np.pi*180
+    elif dva==1 or dva==2 or dva==3 or dva>=5:
+        if dva==1:ddd=np.array([0,0,57.5])[AX,AX,AX,:] 
+        elif dva==2:ddd=np.nanmean(dsd,1)[:,AX,AX,:]
+        elif dva==3:ddd=dsd[:,:,AX,:]
+        elif dva>=5: ddd=np.array([0,0,[57.5,47.5,67.5][m+1]])[AX,AX,AX,:] 
+        
+        chatcm=np.tan(chat/180*np.pi)*ddd[:,:,:,2]+ddd[:,:,0,:2]
+        ctruecm=np.tan(ctrue/180*np.pi)*ddd[:,:,:,2]+ddd[:,:,0,:2]
+        tempcm2=np.sum(np.square(ctruecm-chatcm),axis=2)
+        dctrue2=np.sum(np.square(ctruecm),axis=2)+np.square(ddd[:,:,0,2])
+        dchat2=np.sum(np.square(chatcm),axis=2)+np.square(ddd[:,:,0,2])
+        temp=np.arccos((dctrue2+dchat2-tempcm2)/2/np.sqrt(dctrue2*dchat2))
+        temp=temp/np.pi*180
+        #elif units=='cm': temp=np.sqrt(tempcm2)
+    return temp
+
+def chunits(inn,dva,hvd=None,frd=None):
+    ''' hvd - horizontal or vertical screen-to-eye distance 
+        frd - frontal screen-to-eye distance
+    '''
+    assert(i==0 or i==1)
+    cm=inn/180*np.pi*MD
+    if dva==0: x=cm 
+    elif dva==1: x=np.arctan(cm/57.5)/np.pi*180
+    elif dva==2: 
+        x=np.arctan((cm-np.nanmean(hvd,0))/
+            np.nanmean(frd,0))/np.pi*180    
+    elif dva==3: 
+        x=np.arctan((cm-hvd)/frd)/np.pi*180
+    elif dva==4: 
+        x=57.5*(cm-hvd)/frd
+    elif dva==5 or dva==6 or dva==7:
+        x=np.arctan(cm/[57.5,47.5,67.5][dva-5])/np.pi*180
+    return x    
     
+def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0): 
+    AX=np.newaxis
     G=np.concatenate(inG,0)
     C=[]
     for i in range(len(inG)):
@@ -300,8 +335,8 @@ def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0):
     for i in range(2):
         ii=[LX+2*eye,LY+2*eye][i]
         sel,discard=computeState(np.isnan(G[:,ii]),G[:,0],maxDur=0.05)
-        x=_chunits(G[~sel,ii],dva,i)
-        C[~sel,i]=_chunits(C[~sel,i],dva,i)
+        x=chunits(G[~sel,ii],dva,hvd=G[~sel,LD+i+3*eye],frd=G[~sel,LD+2+3*eye])
+        C[~sel,i]=chunits(C[~sel,i],dva,hvd=G[~sel,LD+i+3*eye],frd=G[~sel,LD+2+3*eye])
         C[sel,i]=np.nan
         d.append(filterGaussian(G[~sel,0],x,t,sigma=0.1))
         #out=filterGaussian(G[~sel,0],G[~sel,i],t,sigma=0.1,ignoreNanInterval=0.05)
@@ -505,7 +540,20 @@ def figureSample(fn,dev=0):
     #plt.show()
     plt.savefig('../publication/figs/%s%d.png'%(fn,dev),bbox_inches='tight')       
                 
-
+def sampleDescr(dva):
+    ds=np.load(DPATH+f'dsFixTh1_0dva{dva}.npy')
+    R=np.zeros((3,4))*np.nan
+    for dev in range(2):
+        m=0
+        for eye in range(2):
+            maxcp=5#[9,5][int(m>0)]
+            y=ds[dev,:,m,eye,:maxcp,:2]
+            c=ds[dev,:,m,eye,:maxcp,2:4]
+            sel=~(np.isnan(y[:,:,0]).sum(1)>2)
+            r=eucldunits(c[sel,:],y[sel,:,:],ds[dev,sel,m,eye,:maxcp,4:7],dva)
+            R[m,dev*2+eye]=np.nanmean(r)
+    ndarray2latextable(R,decim=1,hline=[1],nl=1);
+            
  
 def computePA(suf,docompile=True,short=False,dev=None,m=None):
     ''' computes accuracy estimates '''
@@ -672,34 +720,7 @@ def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
                 res[1+eye,2+i]='-';continue
             if eye<3: dsd=ds[dev,sel,0,eye,:,4:7]
             elif eye==3: dsd=np.nanmean(lrchat[:,sel,:,4:],axis=0)
-            if dva==0 or dva==4: 
-                tempcm=np.sqrt(np.sum(np.square(ctrue-chat),axis=2))
-                if units=='cm': temp=tempcm
-                elif units=='deg':
-                    ctruecm=ctrue+dsd[:,:,:2];chatcm=chat+dsd[:,:,:2];
-                    dctrue2=np.sum(np.square(ctruecm),axis=2)+np.square(dsd[:,:,2])
-                    dchat2=np.sum(np.square(chatcm),axis=2)+np.square(dsd[:,:,2])
-                    temp=np.arccos((dctrue2+dchat2-np.square(tempcm))/2/
-                        np.sqrt(dctrue2*dchat2))/np.pi*180
-            #elif dva==1: 
-            #    chatcm=np.tan(chat/180*np.pi)*57.5
-            #    ctruecm=chatcm=np.tan(ctrue/180*np.pi)*57.5
-            #    tempcm=np.sqrt(np.sum(np.square(ctruecm-chatcm),axis=2))
-            #    temp=np.arctan(tempcm/57.5)/np.pi*180
-            elif dva==1 or dva==2 or dva==3 or dva==5:
-                if dva==1:ddd=np.array([0,0,57.5])[AX,AX,AX,:] 
-                elif dva==2:ddd=np.nanmean(dsd,1)[:,AX,AX,:]
-                elif dva==3:ddd=dsd[:,:,AX,:]
-                elif dva==5: ddd=np.array([0,0,[57.5,47.5,67.5][m+1]])[AX,AX,AX,:] 
-                
-                chatcm=np.tan(chat/180*np.pi)*ddd[:,:,:,2]+ddd[:,:,0,:2]
-                ctruecm=np.tan(ctrue/180*np.pi)*ddd[:,:,:,2]+ddd[:,:,0,:2]
-                tempcm2=np.sum(np.square(ctruecm-chatcm),axis=2)
-                dctrue2=np.sum(np.square(ctruecm),axis=2)+np.square(ddd[:,:,0,2])
-                dchat2=np.sum(np.square(chatcm),axis=2)+np.square(ddd[:,:,0,2])
-                temp=np.arccos((dctrue2+dchat2-tempcm2)/2/np.sqrt(dctrue2*dchat2))
-                if units=='deg': temp=temp/np.pi*180
-                elif units=='cm': temp=np.sqrt(tempcm2)
+            temp=eucldunits(ctrue,chat,dsd,dva)
             if novelLocations: temp=np.nanmean(temp[:,5:],axis=1)
             else: temp=np.nanmean(temp[:,:5],axis=1)
             if eye<2: lracc[eye,sel]=temp
@@ -1088,6 +1109,7 @@ if __name__=='__main__':
     tableVar('HADR0',correlation=False,dev=1)
     tableVar('HADR0',correlation=False,dev=0)
     figureOverview() 
+    sampleDescr(4)
     #tableSlope('HADR1')
     
     
