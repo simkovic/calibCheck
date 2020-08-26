@@ -915,7 +915,10 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
         if v: continue
         totvar[i]=(np.square(w['sy']).sum(1)+np.square(w['so']).sum(1))
         perc= np.square(w['so']).sum(1)/totvar[i]
-        print('eye %d perc. between-session var / tot var = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
+        print('eye %d perc. BSW / (BSV+WSV) = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
+        totvar[i]=(np.square(w['sy']).sum(1)+np.square(w['so']).sum(1)+np.square(w['sm']).sum(1))
+        perc= np.square(w['sm']).sum(1)/totvar[i]
+        print('eye %d perc. BPW / (BPV+BSV+WSV) = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
         print(f'tot accc=%.3f, (%.3f,%.3f)'%(sap(np.sqrt(totvar[i]),50),sap(np.sqrt(totvar[i]),2.5),sap(np.sqrt(totvar[i]),97.5)) )
     accc=np.sqrt(np.array(totvar[0])/4+np.array(totvar[1])/4)
     print(f'tot accc binoc=%.3f, (%.3f,%.3f)'%(sap(accc,50),sap(accc,2.5),sap(accc,97.5)) )
@@ -1068,6 +1071,7 @@ def figurePreproc():
     plt.savefig('../publication/figs/preproc.png',bbox_inches='tight')
      
 if __name__=='__main__':
+    tableVar('HADR0',correlation=False,dev=0);bla
     import pickle
     # loading and preprocessing
     fns=checkFiles()             
