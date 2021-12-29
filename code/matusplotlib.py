@@ -10,11 +10,11 @@ from PIL import ImageFont, ImageDraw, Image
 
 
 __all__ = ['getColors','errorbar','pystanErrorbar',
-           'printCI','formatAxes',
+           'printCI','formatAxes','saveStanFit','loadStanFit',
            'figure','subplot','subplotAnnotate',
            'hist','histCI','plotCIttest1','plotCIttest2',
            'ndarray2latextable','ndarray2gif','plotGifGrid',
-           'str2img','plothistCI']
+           'str2img','plothistCI','fit2dict']
 CLR=(0.2, 0.5, 0.6)
 # size of figure columns
 FIGCOL=[3.27,4.86,6.83] # plosone
@@ -136,7 +136,7 @@ def plothistCI(a,b,l,u):
         >>> plothistCI(a,b,l,u)
     '''
     b=b[:-1]+np.diff(b)/2.
-    plt.plot(b,a,color=CLR)
+    plt.plot(b,a)
     x=np.concatenate([b,b[::-1]])
     ci=np.concatenate([u,l[::-1]])
     plt.gca().add_patch(plt.Polygon(np.array([x,ci]).T,
@@ -202,19 +202,20 @@ def subplot(*args):
     formatAxes(ax)
     return ax
 
-def subplotAnnotate(loc='nw',nr=None,clr='k'):
+def subplotAnnotate(loc='nw',nr=None,clr='k',fs=12,ax=None):
     if type(loc) is list and len(loc)==2: ofs=loc
     elif loc=='nw': ofs=[0.1,0.9]
     elif loc=='sw': ofs=[0.1,0.1]
     elif loc=='se': ofs=[0.9,0.1]
     elif loc=='ne': ofs=[0.9,0.9]
     else: raise ValueError('loc only supports values nw, sw, se and ne')
-    ax=plt.gca()
-    if nr is None: nr=ax.colNum*ax.numRows+ax.rowNum
+    if ax is None: ax=plt.gca()
+    if nr is None: nr=ax.get_subplotspec().colspan.start*ax.numRows+ax.get_subplotspec().rowspan.start
+    elif np.isnan(nr):nr=ax.get_subplotspec().rowspan.start*ax.numCols+ax.get_subplotspec().colspan.start
     plt.text(plt.xlim()[0]+ofs[0]*(plt.xlim()[1]-plt.xlim()[0]),
             plt.ylim()[0]+ofs[1]*(plt.ylim()[1]-plt.ylim()[0]), 
-            str(unichr(65+nr)),horizontalalignment='center',verticalalignment='center',
-            fontdict={'weight':'bold'},fontsize=12,color=clr)
+            str(chr(65+nr)),horizontalalignment='center',verticalalignment='center',
+            fontdict={'weight':'bold'},fontsize=fs,color=clr)
 
 def _errorbar(out,x,clr='k'):
     plt.plot([x,x],out[1:3],color=clr)
@@ -232,7 +233,7 @@ def _horebar(d,xs,clr):
         plt.plot([np.median(d[:,i])],[x],mfc=clr,mec=clr,ms=8,marker='|',mew=2)
     plt.gca().set_yticks(xs)
 
-def plotCIttest1(y,x=0,alpha=0.05,clr='k'):
+def plotCIttest1(y,x=0,alpha=0.05,clr=CLR):
     ''' single group t-test'''
     m=y.mean();df=y.size-1
     se=y.std()/y.size**0.5
@@ -255,7 +256,7 @@ def plotCIttest2(y1,y2,x=0,alpha=0.05,clr='k'):
     _errorbar(out,x=x,clr=clr)
     return out
     
-def errorbar(y,clr=CLR,x=None,labels=None):
+def errorbar(y,clr=CLR,x=None,labels=None,plot=True):
     ''' customized error bars
         y - NxM ndarray containing results of
             N simulations of M random variables
@@ -277,10 +278,13 @@ def errorbar(y,clr=CLR,x=None,labels=None):
     for i in range(d.shape[1]):
         out.append([np.median(d[:,i]),sap(d[:,i],2.5),sap(d[:,i],97.5),
                     sap(d[:,i],25),sap(d[:,i],75)])
-        _errorbar(out[-1],x=x[i],clr=clr)
-    ax.set_xticks(x)
-    if not labels is None: ax.set_xticklabels(labels)
-    plt.xlim([np.floor(np.min(x)-1),np.ceil(np.max(x)+1)])
+        if len(clr)==d.shape[1]:c=clr[i]
+        else: c=clr
+        if plot: _errorbar(out[-1],x=x[i],clr=c)
+    if plot:
+        ax.set_xticks(x)
+        if not labels is None: ax.set_xticklabels(labels)
+        plt.xlim([np.floor(np.min(x)-1),np.ceil(np.max(x)+1)])
     return np.array(out)
 
 def pystanErrorbar(w,keys=None):
@@ -289,7 +293,9 @@ def pystanErrorbar(w,keys=None):
     """
     kk=0
     ss=[];sls=[]
-    if keys is None: keys=w.keys()[:-1]
+    if keys is None: 
+        keys=list(w.keys())
+        keys.remove('lp__')
     for k in keys:
         d= w[k]
         if d.ndim==1:
@@ -305,6 +311,24 @@ def pystanErrorbar(w,keys=None):
     #ss=np.array(ss)
     for i in range(len(ss)):
         print(sls[i], ss[i].mean(), 'CI [%.3f,%.3f]'%(sap(ss[i],2.5),sap(ss[i],97.5)))
+
+def fit2dict(fit,w0=None):
+    '''translates Stanfit data class to Python dictionary''' 
+    w=fit.extract()
+    
+    w['lp__']=w['lp__'][:,np.newaxis]
+    if not w0 is None:
+        for k in w.keys():
+            w[k]=np.concatenate([w0[k],w[k]],axis=1)
+    temp=fit.summary()
+    sumr=temp['summary']
+    w['nms']=temp['summary_rownames']
+    if not w0 is None: assert(np.all(w['nms']==w0['nms']))
+    if w0 is None: w['rhat']=sumr[np.newaxis,:,-1]
+    else: w['rhat']=np.concatenate([w0['rhat'],sumr[np.newaxis,:,-1]],axis=0)
+    return w
+
+
 def printCI(w,var=None,decimals=3):
     sfmt=' {:.{:d}f} [{:.{:d}f},{:.{:d}f}]'
     def _print(b):
@@ -324,13 +348,13 @@ def saveStanFit(fit,fname='test'):
     else: path = os.getcwd()+os.path.sep+'standata'+os.path.sep
     try: os.mkdir(path)
     except: OSError
-    w=fit.extract()
+    w=fit2dict(fit)
     f=open(path+fname+'.stanfit','wb')
     pickle.dump(w,f)
     f.close()
-    f=open(path+fname+'.check','w')
-    f.write(str(fit))
-    f.close()
+    #f=open(path+fname+'.check','w')
+    #f.write(str(fit))
+    #f.close()
 def loadStanFit(fname):
     if fname.count(os.path.sep): path=''
     else: path = os.getcwd()+os.path.sep+'standata'+os.path.sep
@@ -341,8 +365,9 @@ def loadStanFit(fname):
 
 def ndarray2latextable(array,decim=2,hline=[0],vline=None,nl=1):
     ''' array - 2D numpy.ndarray with shape (rows,columns)
+                or 3D numpy.array with shape (rows,columns,STAN samples)
         decim - decimal precision of float, use 0 for ints
-            should be int scalar or a list of list,len(decim)=nr cols
+            should be scalar or a list with len(decim)=nr cols
     '''
     ecol=' \\\\\n';shp=array.shape
     out='\\begin{table}\n\\centering\n\\begin{tabular}{|'
@@ -355,28 +380,19 @@ def ndarray2latextable(array,decim=2,hline=[0],vline=None,nl=1):
             if type(decim) is list: dc=decim[j]
             else: dc=decim
             if type(array[i,j])==np.str_ or type(array[i,j])==str: out+='%s'%array[i,j]
-            elif dc==0: out+='%d'%int(array[i,j])
+            #elif dc==0: out+='%d'%int(array[i,j])
             else:
-                flt='{: .%df}'%dc
-                out+=flt.format(np.round(array[i,j],dc))
+                if array.ndim==3:
+                    flt='{: .%df} [{: .%df}, {: .%df}]'%(dc,dc,dc)
+                    out+=flt.format(np.median(array[i,j,:]),
+                        stats.scoreatpercentile(array[i,j,:],2.5),
+                        stats.scoreatpercentile(array[i,j,:],97.5))
+                else:
+                    flt='{: .%df}'%dc
+                    out+=flt.format(np.round(array[i,j],dc))
             if j<shp[1]-1: out+=' & '
         out+=ecol
         if hline.count(i)==1: out+='\\hline\n'
-    out+='\\hline\n\\end{tabular}\n\\end{table}'
-    print(out)
-    
-def ndsamples2latextable(data,decim=2):
-    ''' data - 3D numpy.ndarray with shape (rows,columns,samples)'''
-    elem='{: .%df} [{: .%df}, {: .%df}]'%(decim,decim,decim)
-    ecol=' \\\\\n'
-    out='\\begin{table}\n\\centering\n\\begin{tabular}{|l|'+data.shape[1]*'c|'+'}\n\\hline\n'
-    for i in range(data.shape[0]):
-        for j in range(data.shape[1]):
-            out+=elem.format(data[i,j,:].mean(),
-                stats.scoreatpercentile(data[i,j,:],2.5),
-                stats.scoreatpercentile(data[i,j,:],97.5))
-            if j<data.shape[1]-1: out+=' & '
-        out+=ecol
     out+='\\hline\n\\end{tabular}\n\\end{table}'
     print(out)
 
@@ -500,3 +516,62 @@ def printProgress(iteration, total, time,prefix='', decimals=1, bar_length=30):
         stdout.write('\n')
     stdout.flush()  
 
+
+def plotMarkovChain(S,R,th=.2):
+    # S - list of states, each state is a tuple 
+    #    with x,y pos, state name and (optional) orientation 
+    #    of the self-loop in degrees of angle, 0 deg = point to right
+    # R - matrix with transition probabilities 
+    # th - each edge weight greater than th will be drawn
+    # example: 
+    #>>> plotMarkovChain([[0,0,'A',180],[0,2,'B']],[[1,0],[0.75,0.25]])
+    R=np.array(R)
+    assert(len(S)==R.shape[0])
+    ax=plt.gca()
+    r=0.5
+    g=.2
+    slw=60 #self-loop start point to end point angle
+    for i in range(len(S)):
+        ax.add_patch(plt.Circle(S[i][:2],radius=r,fill=False,lw=2.5))
+        plt.text(S[i][0],S[i][1],S[i][2],ha='center',va='center',size=20)
+        for j in range(len(S)):
+            if R[i,j]<th:continue
+            if i!=j:
+                dx=S[j][0]-S[i][0];dy=S[j][1]-S[i][1]
+                ty=np.sin(np.arctan2(dy,dx))*r
+                tx=np.cos(np.arctan2(dy,dx))*r
+                s=(S[i][0]+tx,S[i][1]+ty);e=(S[i][0]+dx-tx,S[i][1]+dy-ty)
+                tx=(3*s[0]+2*e[0])/5;ty=(3*s[1]+2*e[1])/5
+                tphi=np.rad2deg(np.arctan2(dy,dx))
+                if R[i,j]>th and R[j,i]>th: 
+                    m=.5
+                    
+                    tx+=np.cos(np.arctan2(dy,dx)-np.pi/2)*.2
+                    ty+=np.sin(np.arctan2(dy,dx)-np.pi/2)*.2
+                else: m=0
+
+            else:
+                if len(S[i])>3: tht=S[i][3]
+                else: tht=0
+                s=(S[i][0]+np.cos(np.radians(tht-slw/2))*r,
+                    S[i][1]+np.sin(np.radians(tht-slw/2))*r)
+                e=(S[i][0]+np.cos(np.radians(tht+slw/2))*r,
+                    S[i][1]+np.sin(np.radians(tht+slw/2))*r)
+                tx=(s[0]+e[0])/2;ty=(s[1]+e[1])/2
+                tx+=np.cos(np.deg2rad(tht))*.5
+                ty+=np.sin(np.deg2rad(tht))*.5
+                tphi=180
+                m=2
+            ax.add_patch(mpl.patches.FancyArrowPatch(s,e,color='k',
+                connectionstyle='arc3,rad='+str(m),lw=1,
+                arrowstyle='simple,head_width=15,head_length=15'))
+            plt.text(tx,ty,'%.2f'%np.round(R[i,j],2),
+                bbox={'alpha':.8,'fc':'w','lw':0},
+                backgroundcolor='w',ha='center',va='center',size=8,
+                rotation=(tphi+90)%180-90)
+    xd=np.float32(list(map(lambda x: x[0],S)))
+    plt.xlim([np.min(xd)-1,1+np.max(xd)])
+    yd=np.float32(list(map(lambda x: x[1],S)))
+    plt.ylim([np.min(yd)-1,1+np.max(yd)])
+    ax.set_aspect(1)
+    plt.axis(False);

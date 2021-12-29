@@ -1,7 +1,7 @@
 import os,pystan,pickle
 import numpy as np
 import pylab as plt
-from matusplotlib import ndarray2latextable,figure,subplot
+from matusplotlib import ndarray2latextable,figure,subplot,saveStanFit,loadStanFit
 from scipy.stats import scoreatpercentile as sap
 MD=70 #monitor distance used to compute deg visual angle in the output files
 #position of calibration points
@@ -21,7 +21,6 @@ def readCalibGaze(fn):
             point, first row of each list element provides the
             position of the calibration point
     '''
-    import os
     calib=[]
     f=open(fn,'r')
     decalib=True
@@ -128,8 +127,8 @@ def plotCMsingle(calibData,eye,cm=None,ofn=None,lim=[30,20],c=[22,11.5]):
        
 def checkFiles(plot=False):
     '''checks the congruency between meta-data and log files'''
-    opath=os.getcwd()[:-4]+'output'+os.path.sep+'good'+os.path.sep
-    vpinfo=np.int32(np.loadtxt(opath[:-5]+'vpinfo.res',delimiter=','))
+    opath=os.getcwd()[:-4]+'output'+os.path.sep+'anon'+os.path.sep
+    vpinfo=np.int32(np.loadtxt(opath+'vpinfo.res',delimiter=','))
 
     #assert(np.all(vpinfo[:,4]>=30*3.5))
     #assert(np.all(info[:,4]<=30*11))
@@ -158,8 +157,8 @@ def checkFiles(plot=False):
   
 def loadCalibrationData(fns):
     '''loads all data into a single object '''
-    opath=os.getcwd()[:-4]+'output'+os.path.sep+'good'+os.path.sep
-    vpinfo=np.int32(np.loadtxt(opath[:-5]+'vpinfo.res',delimiter=','))
+    opath=os.getcwd()[:-4]+'output'+os.path.sep+'anon'+os.path.sep
+    vpinfo=np.int32(np.loadtxt(opath+'vpinfo.res',delimiter=','))
     D=[]
     for k in range(len(fns)):
         D.append([vpinfo[k,:]])
@@ -275,7 +274,7 @@ def eucldunits(ctrue,chat,dsd,dva):
         chat - predicted position
         dsd - screen-to-eye distance
         dva - type of unit computation'''
-
+    AX=np.newaxis
     if dva<=0 or dva==4: 
         tempcm=np.sqrt(np.sum(np.square(ctrue-chat),axis=2))
         if dva<0: return tempcm
@@ -304,7 +303,6 @@ def chunits(inn,dva,hvd=None,frd=None):
     ''' hvd - horizontal or vertical screen-to-eye distance 
         frd - frontal screen-to-eye distance
     '''
-    assert(i==0 or i==1)
     cm=inn/180*np.pi*MD
     if dva==0: x=cm 
     elif dva==1: x=np.arctan(cm/57.5)/np.pi*180
@@ -535,7 +533,7 @@ def figureSample(fn,dev=0):
             if coh: ax.set_yticklabels([])
             else: plt.ylabel(['Number of included\nparticipants','Percentage of included\ncalibration locations'][tp])
             if tp==0:plt.title(['4 months','7 months','10 months'][coh])
-            ax.set_xticklabels(['L','R','B']*3)
+            ax.set_xticklabels(['L','R','B']*int(len(xtcs)/3))
             
     #plt.show()
     plt.savefig('../publication/figs/%s%d.png'%(fn,dev),bbox_inches='tight')       
@@ -636,10 +634,9 @@ def computePA(suf,docompile=True,short=False,dev=None,m=None):
                 else: doi=range(16) 
                 for i in doi:
                     print(dev,eye,m,i)
-                    fit = sms[i].sampling(data=dat,iter=6000,
-                        chains=6,thin=10,warmup=3000,n_jobs=6,seed=SEED)
-                    with open(DPATH+f'd{dev}e{eye}m{m}i{i}{suf}.stanfit','wb') as f: 
-                        pickle.dump(fit,f,protocol=-1)               
+                    fit = sms[i].sampling(data=dat,iter=60,
+                        chains=6,thin=1,warmup=30,n_jobs=6,seed=SEED)
+                    saveStanFit(fit,DPATH+f'd{dev}e{eye}m{m}i{i}{suf}')             
 def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
     plot=0,pref='a',legend=False):
     ''' prints code for latex table to console
@@ -674,24 +671,18 @@ def tablePA(fn,m=1,dev=0,novelLocations=False,dva=0,units='deg',
         
         for eye in range(4):
             if eye<3:
-                with open(DPATH+f'sm{i}.pkl','rb') as f: sm=pickle.load(f)
-                try:
-                    with open(DPATH+f'd{dev}e{eye}m{m}i{i}{fn}dva{dva}.stanfit','rb') as f: fit=pickle.load(f)
+                #with open(DPATH+f'sm{i}.pkl','rb') as f: sm=pickle.load(f)
+                try:w=loadStanFit(DPATH+f'd{dev}e{eye}m{m}i{i}{fn}dva{dva}')
                 except: continue
-                #print(fit);bla
-                smr=fit.summary()
-                sr=smr['summary'][:-1,-1]
-                inds=(sr>1.1).nonzero()[0]
+                inds=(w['rhat']>1.1).nonzero()[0]
                 if len(inds)>0:
-                    print(dev,eye,top[2+i],smr['summary_rownames'][inds],sr[inds])
+                    print(dev,eye,top[2+i],w['nms'][inds],w['rhat'][inds])
                     if eye==0: lchat=np.nan
                     elif eye==1: rchat=np.nan
                     res[1+eye,2+i]='-';continue
                 else: print(dev,eye,i,top[2+i],'CONVERGED') 
                 #print(f'd{dev}e{eye}m{m}i{i}',len(inds))
-                w=fit.extract()
                 o=np.mean(w['o'],axis=0)
-                
                 if o.ndim==1: o=o[AX,:]
                 slope= o[:,AX,2:] 
                 if slope.ndim==2: slope=slope[:,:,AX]
@@ -848,23 +839,20 @@ def computeVar(fn,includePredictors=True,dev=None,dva=0,doCompile=True):
             sel=~np.all(np.all(np.isnan(ds[dev,:,:,eye,:,0]),axis=2),axis=1)
             #sel[30:]=False
             age=np.load(DPATH+'age.npy')[sel]
-            age= 1-age/360
+            age= age/30-7
             dist=ds[dev,sel,:,eye,:,6]/100
             y=ds[dev,sel,:,eye,:,:2]
             c=ds[dev,sel,:,eye,:,2:4]
 
             dat={'y':y,'N':y.shape[0],'c':c,'age':age,'dist':dist}
             fit = sm.sampling(data=dat,iter=6000,chains=6,thin=10,warmup=3000,n_jobs=6,seed=SEED)
-            #print(fit);bla
-            with open(DPATH+f'smHADR{pred}{dev}{eye}dva{dva}.stanfit','wb') as f: 
-                pickle.dump(fit,f,protocol=-1)
+            saveStanFit(fit,DPATH+f'smHADR{pred}{dev}{eye}dva{dva}')
 
-def tableVar(fn,correlation=False,dev=0,plot=True): 
+def tableVar(fn,correlation=False,dev=0,plot=True,trns=None): 
     ''' prints code for latex table to console
         table includes variance estimates '''
-     
+    if trns is None: trns=lambda x: x 
     left=[]
-    from scipy.stats import scoreatpercentile as sap
     v=int(correlation)
     #for e in range(2):#device
     for i in range(3): # eye
@@ -883,41 +871,37 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
         top.append(f'${temp1}_{temp2}$')
         lleft.append(['']*len(lleft[0]))
     res=np.array([top]+list(np.array(lleft).T),dtype='U256')
-    with open(DPATH+f'sm{fn}.pkl', 'rb') as f: sm=pickle.load(f)
     ax=np.newaxis 
-    e=dev#for e in range(2):# device
     resout=np.zeros((res.shape[0]-1,res.shape[1]-2,5))*np.nan
     qntls=[50,2.5,97.5,25,75]
     totvar=[[],[],[]]
     for i in range(3): # eye
-        try: 
-            with open(DPATH+f'sm{fn}{e}{i}dva0.stanfit','rb') as f: fit=pickle.load(f)
-        except: continue
-        smr=fit.summary()
-        sr=smr['summary'][:-1,-1]
-        inds=(sr>1.1).nonzero()[0]
+        try: w=loadStanFit(DPATH+f'sm{fn}{dev}{i}dva0')
+        except: 
+            print('missing file: '+DPATH+f'sm{fn}{dev}{i}dva0')
+            continue
+        inds=(w['rhat'][0,:-1]>1.1).nonzero()[0]
         if len(inds)>0: 
-            print(e,i,smr['summary_rownames'][inds], sr[inds])
-        else: print(e,i,'CONVERGED') 
-        w=fit.extract()
+            print(dev,i,w['nms'][inds], w['rhat'][0,inds])
+        else: print(dev,i,'CONVERGED') 
         ods=0;tnas=0
         for l in range(3): # level
-            if v==0 and 'ods' in w.keys(): prd=[w['ods']*55/100,0,w['tnas']*(1-30*7/360)][l]
+            if v==0 and 'ods' in w.keys(): prd=[w['ods']*55/100,0,w['nas']*(1-30*7/360)][l]
             else: prd=0
             temp=w[['s','r'][v]+['y','o','m'][l]]+prd
             for d in range(3): # dimension
                 if l==0 and d==2 or l==0 and d==1 and v==1:continue
-                if v==0: tmp=np.square(temp[:,d])
+                if v==0: tmp=trns(temp[:,d])
                 else:tmp=temp[:,[0,0,1][d],[1,2,2][d]]
                 #if v==0 and d==2: tmp*=10# or v==1 and d>0:
                 res[1+l+3*i,2+d]='\\textbf{%.2f} (%.2f,%.2f)'%(np.median(tmp),sap(tmp,2.5),sap(tmp,97.5))
                 resout[l+3*i,d,:]=list(map(lambda x: sap(tmp,x),qntls))
         if v: continue
-        totvar[i]=(np.square(w['sy']).sum(1)+np.square(w['so']).sum(1))
-        perc= np.square(w['so']).sum(1)/totvar[i]
+        totvar[i]=(trns(w['sy']).sum(1)+trns(w['so']).sum(1))
+        perc= trns(w['so']).sum(1)/totvar[i]
         print('eye %d perc. BSW / (BSV+WSV) = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
-        totvar[i]=(np.square(w['sy']).sum(1)+np.square(w['so']).sum(1)+np.square(w['sm']).sum(1))
-        perc= np.square(w['sm']).sum(1)/totvar[i]
+        totvar[i]=(trns(w['sy']).sum(1)+trns(w['so']).sum(1)+trns(w['sm']).sum(1))
+        perc= trns(w['sm']).sum(1)/totvar[i]
         print('eye %d perc. BPW / (BPV+BSV+WSV) = %.3f, (%.3f,%.3f)'%(i,sap(perc,50),sap(perc,2.5),sap(perc,97.5)))
         print(f'tot accc=%.3f, (%.3f,%.3f)'%(sap(np.sqrt(totvar[i]),50),sap(np.sqrt(totvar[i]),2.5),sap(np.sqrt(totvar[i]),97.5)) )
     accc=np.sqrt(np.array(totvar[0])/4+np.array(totvar[1])/4)
@@ -928,6 +912,7 @@ def tableVar(fn,correlation=False,dev=0,plot=True):
     np.save('test',resout)
     figureVar(resout,ffn)
 def figureVar(dat,fnout):
+    #TODO combined summary both axes
     plt.close('all') 
     clrs=['g','c','y']
     handles=[]
@@ -946,8 +931,8 @@ def figureVar(dat,fnout):
     plt.grid(True,axis='y')
     plt.plot([11,11],[0,10],'k',lw=0.5)
     #if not k: plt.xlabel('LC model')
-    plt.ylabel('Variance in $\mathrm{cm}^2$')
-    plt.ylim([0,5])
+    plt.ylabel('Standard deviation in deg')
+    plt.ylim([0,2.5])
     ax=plt.gca()
     ax.set_xticks([1,5,9,13,17,21])
     ax.set_xticklabels(['L','S','P','L','S','P'])
@@ -982,17 +967,12 @@ def tableSlope(fn,dev=0):
     #for e in range(2):#device
     e=dev
     for i in range(3): # eye
-        try:
-            with open(DPATH+f'sm{fn}{e}{i}dva0.stanfit','rb') as f: fit=pickle.load(f)
+        try:w=loadStanFit(DPATH+f'sm{fn}{e}{i}dva0')
         except: continue
-        smr=fit.summary()
-        sr=smr['summary'][:-1,-1]
-        inds=(sr>1.1).nonzero()[0]
+        inds=(w['rhat']>1.1).nonzero()[0]
         if len(inds)>0: 
-            print(e,i,smr['summary_rownames'][inds], sr[inds])
+            print(e,i,w['nms'][inds], w['rhat'][inds])
         else: print(e,i,'CONVERGED')
-        w=fit.extract()
-        #print(fit)
         g=1
         for v in range(len(vrs)):
             if vrs[v]=='mm': 
@@ -1007,7 +987,70 @@ def tableSlope(fn,dev=0):
                     sap(temp[:,k],2.5),sap(temp[:,k],97.5))
                 g+=1
     ndarray2latextable(res,decim=0,hline=[0,3,6,8,10,12],nl=1);
-    print('')  
+    print('') 
+    
+def computeVarAll(fn,doCompile=True,dva=0,transform=0,predictors=0,quick=False):
+    trns=['','sqrt','exp'][transform]
+    pn=['','+nas*age[n]'][predictors]
+    pm=['','+mms*(m-1)+mas[(m>3)+1]*age[n]'][predictors]
+    po=['','+ods[(m>3)+1]*dist[n,m,p]+oms*(m-1)+oas[(m>3)+1]*age[n]'][predictors]
+    lbs=['0','-10'][int(transform==2)]
+    model=f'''
+    data {{
+        int<lower=0> N; //nr subjects
+        vector[2] y[N,6,9];
+        vector[2] c[N,6,9];
+        real age[N];
+        real dist[N,6,9];
+    }}parameters{{
+        vector<lower=-100,upper=100>[2] o[N,6];
+        real<lower=-10,upper=10> r[2,N];
+        vector<lower={lbs},upper=10>[2] sy[2];
+        vector<lower={lbs},upper=10>[2] so[2];
+        vector<lower=-100,upper=100>[2] mo[2,N];
+        vector<lower={lbs},upper=10>[2] sm[2];
+        vector<lower=-100,upper=100>[2] mm[2];
+        real<lower=0,upper=10> sr[2];
+        real<lower=-10,upper=10> mr[2];'''+['','''
+        vector<lower=-10,upper=10>[2] nas;
+        vector<lower=-10,upper=10>[2] ods[2];
+        vector<lower=-10,upper=10>[2] mms;
+        vector<lower=-10,upper=10>[2] mas[2];
+        vector<lower=-10,upper=10>[2] oms;
+        vector<lower=-10,upper=10>[2] oas[2];'''][predictors]+f'''
+    }} model {{
+
+        for (n in 1:N){{
+            mo[1][n]~normal(mm[1],{trns}(sm[1]{pn}));
+            mo[2][n]~normal(mm[2],{trns}(sm[2]{pn}));
+            r[1][n]~normal(mr[1],sr[1]);
+            r[2][n]~normal(mr[2],sr[2]);
+        for (m in 1:6){{
+            o[n,m]~normal(mo[(m>3)+1][n],{trns}(so[(m>3)+1]{pm}));
+        for (p in 1:9){{
+            if (! is_nan(y[n,m,p][1]))
+                c[n,m,p]~normal(o[n,m]+r[(m>3)+1][n]*y[n,m,p],
+                    {trns}(sy[(m>3)+1]{po}));}}}}}}}}'''
+    print(model) 
+    sm = pystan.StanModel(model_code=model)                
+    #with open(DPATH+f'smHADER{transform}.pkl', 'wb') as f: pickle.dump(sm, f)
+    #with open(DPATH+f'smHADER{transform}.pkl', 'rb') as f: sm=pickle.load(f)
+    #with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
+    ds=np.load(DPATH+f'ds{fn}dva{dva}.npy')
+    ds=np.hstack((ds[0,:],ds[1,:]))
+    #print(ds.shape);bla
+    for eye in [2]:#TODO
+        sel=~np.all(np.isnan(ds[:,:,eye,:,0]),axis=(1,2))
+        #sel[30:]=False
+        age=np.load(DPATH+'age.npy')[sel]
+        age= age/30-7
+        dist=(ds[sel,:,eye,:,6]-60)/10
+        y=ds[sel,:,eye,:,:2]
+        c=ds[sel,:,eye,:,2:4]
+        dat={'y':y,'N':y.shape[0],'c':c,'age':age,'dist':dist}
+        mlt=[10,1][int(quick)]
+        fit = sm.sampling(data=dat,iter=600*mlt,chains=6,thin=10,warmup=300*mlt,n_jobs=6,seed=SEED,init=0)
+        saveStanFit(fit,DPATH+f'smHADER{transform}{eye}{predictors}dva{dva}')
     
 def figureOverview():
     figure(size=3,aspect=0.4,dpi=DPI)
@@ -1071,50 +1114,55 @@ def figurePreproc():
     plt.savefig('../publication/figs/preproc.png',bbox_inches='tight')
      
 if __name__=='__main__':
-    tableVar('HADR0',correlation=False,dev=0);bla
-    import pickle
-    # loading and preprocessing
-    fns=checkFiles()             
-    D=loadCalibrationData(fns)
-    with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
+    #tableVar('HADR0',dev=0);stop
+    if False:
+        # loading and preprocessing
+        fns=checkFiles()             
+        D=loadCalibrationData(fns)
+        with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
+        with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
+        for i in range(5):dataPreprocessing(D,f'dsFixTh1_0dva{i}',thacc=1,dva=i)
+        dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
+            thvel=20,dva=0,minDur=0.1)
+        # estimate LC parameters (took appr. a week on i7 haswell CPU)
+        computePA('FixTh1_0dva0',docompile=False)
+        computePA('FixTh1_0dva0',short=True,dev=1,docompile=False)
+        computePA('FixTh1_0dva0',short=True,m=-1,dev=0,docompile=False)
+        computePA('FixTh2Vel20minDur0_1dva0',short=True,dev=0,docompile=False)
+    #computeVarAll('FixTh1_0',transform=0,predictors=0)
+    computeVarAll('FixTh1_0',transform=0,predictors=1)
+    computeVarAll('FixTh1_0',transform=1,predictors=1)
+    
 
-    with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
-    dataPreprocessing(D,'dsFixTh2Vel20minDur0_1dva0',thacc=2,
-        thvel=20,dva=0,minDur=0.1)
-    # estimate LC parameters (took appr. a week on i7 haswell CPU)
-    computePA('FixTh1_0dva0',docompile=False)
-    computePA('FixTh1_0dva0',docompile=False,short=True,dev=1)
-    computePA('FixTh1_0dva0',docompile=False,short=True,m=-1,dev=0)
-    computePA('FixTh2Vel20minDur0_1dva0',docompile=False,short=True,dev=0)
-    computePA('FixTh1_0dva2',docompile=False,short=True)
-    computePA('FixTh1_0dva1',docompile=False,short=True)
-    computePA('FixTh1_0dva4',docompile=False,short=True)
-    computePA('FixTh1_0dva3',docompile=False,short=True)
     # estimate variance with three-level model
-    computeVar('FixTh1_0',dva=0,dev=0,includePredictors=False,doCompile=False)
-    computeVar('FixTh1_0',dva=4,dev=0,includePredictors=True,doCompile=False)
-    computeVar('FixTh1_0',dva=0,dev=0,includePredictors=True,doCompile=False)
-    computeVar('FixTh1_0',dva=0,dev=1,includePredictors=False,doCompile=False)
+    #done computeVar('FixTh1_0',dva=0,dev=0,includePredictors=False)
+    
+    #computeVar('FixTh1_0',dva=0,dev=0,includePredictors=True)
+    #done computeVar('FixTh1_0',dva=0,dev=1,includePredictors=False)
+    if False:
+        # figures  
+        figureSample(f'dsFixTh1_0dva0incl',dev=0)
+        figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
+        figureSample(f'dsFixTh1_0dva0incl',dev=1);
 
-    # figures  
-    figureSample(f'dsFixTh1_0dva0incl',dev=0)
-    figureSample(f'dsFixTh2Vel20minDur0_1dva0incl')
-    figureSample(f'dsFixTh1_0dva0incl',dev=1);
-
-    figurePreproc()
-    tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
-    tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
-    tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)
-    tablePA('FixTh1_0',m=-1,dva=0,dev=0,plot=2,novelLocations=True)
-    tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=1,pref='aL')
-    tablePA('FixTh2Vel20minDur0_1',m=1,dev=0,plot=2,pref='aP')
-    tablePA('FixTh1_0',m=1,dva=3,dev=0,plot=2) 
-    tablePA('FixTh1_0',m=1,dva=1,dev=0,plot=2) 
-    tableVar('HADR0',correlation=False,dev=1)
-    tableVar('HADR0',correlation=False,dev=0)
-    figureOverview() 
-    sampleDescr(4)
+        #figurePreproc()
+        tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=2,legend=True)
+        tablePA('FixTh1_0',m=1,dva=0,dev=1,plot=2)
+        tablePA('FixTh1_0',m=0,dva=0,dev=0,plot=2)
+        tablePA('FixTh1_0',m=-1,dva=0,dev=0,plot=2,novelLocations=True)
+        tablePA('FixTh1_0',m=1,dva=0,dev=0,plot=1,pref='aL')
+        tablePA('FixTh2Vel20minDur0_1',m=1,dev=0,plot=2,pref='aP')
+        tableVar('HADR0',correlation=False,dev=1)
+        tableVar('HADR0',correlation=False,dev=0)
+        #figureOverview() 
+        #sampleDescr(4)
+    
     #tableSlope('HADR1')
+    #different unit transform 
+    #for i in range(1,5): computePA(f'FixTh1_0dva{i}',short=True,docompile=False)
+    #computeVar('FixTh1_0',dva=4,dev=0,includePredictors=True)
+    #tablePA('FixTh1_0',m=1,dva=3,dev=0,plot=2) 
+    #tablePA('FixTh1_0',m=1,dva=1,dev=0,plot=2) 
     
     
 
