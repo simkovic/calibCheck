@@ -209,19 +209,27 @@ def subplotAnnotate(loc='nw',nr=None,clr='k',fs=12,ax=None):
     elif loc=='se': ofs=[0.9,0.1]
     elif loc=='ne': ofs=[0.9,0.9]
     else: raise ValueError('loc only supports values nw, sw, se and ne')
-    if ax is None: ax=plt.gca()
-    if nr is None: nr=ax.get_subplotspec().colspan.start*ax.numRows+ax.get_subplotspec().rowspan.start
+    if ax is None:ax=plt.gca()
+    ax.numRows = ax.get_subplotspec().get_geometry()[0]
+    ax.numCols = ax.get_subplotspec().get_geometry()[1] 
+    if nr is None:
+        nr=ax.get_subplotspec().colspan.start*ax.numRows +ax.get_subplotspec().rowspan.start
     elif np.isnan(nr):nr=ax.get_subplotspec().rowspan.start*ax.numCols+ax.get_subplotspec().colspan.start
-    plt.text(plt.xlim()[0]+ofs[0]*(plt.xlim()[1]-plt.xlim()[0]),
-            plt.ylim()[0]+ofs[1]*(plt.ylim()[1]-plt.ylim()[0]), 
+    x=ax.get_xlim();y=ax.get_ylim()
+    ax.text(x[0]+ofs[0]*(x[1]-x[0]),y[0]+ofs[1]*(y[1]-y[0]), 
             str(chr(65+nr)),horizontalalignment='center',verticalalignment='center',
             fontdict={'weight':'bold'},fontsize=fs,color=clr)
 
-def _errorbar(out,x,clr='k'):
-    plt.plot([x,x],out[1:3],color=clr)
-    plt.plot([x,x],out[3:5],
-        color=clr,lw=3,solid_capstyle='round')
-    plt.plot([x],[out[0]],mfc=clr,mec=clr,ms=8,marker='_',mew=2)
+def _errorbar(out,x,clr='k',vertical=True):
+    if vertical:
+        plt.plot([x,x],out[1:3],color=clr)
+        if len(out)>3:plt.plot([x,x],out[3:5],color=clr,lw=3,solid_capstyle='round')
+        plt.plot([x],[out[0]],mfc=clr,mec=clr,ms=8,marker='_',mew=2)
+    else:
+        plt.plot(out[1:3],[x,x],color=clr)
+        if len(out)>3:plt.plot(out[3:5],[x,x],color=clr,lw=3,solid_capstyle='round')
+        plt.plot([out[0]],[x],mfc=clr,mec=clr,ms=8,marker='|',mew=2)
+
 
 def _horebar(d,xs,clr):
     ''' code snippet for horizontal errorbar'''
@@ -232,18 +240,33 @@ def _horebar(d,xs,clr):
             color=clr,lw=3,solid_capstyle='round')
         plt.plot([np.median(d[:,i])],[x],mfc=clr,mec=clr,ms=8,marker='|',mew=2)
     plt.gca().set_yticks(xs)
+    
+def plotCIwald(y,x=0,df=None,alpha=0.05,alpha2=0.25,clr=CLR,verticalErrorbar=True):
+    if df is None: m=np.nanmean(y,0);df=np.sum(~np.isnan(y),0)
+    else:  m=y
+    se=np.sqrt(m*(1-m)/df)
+    cil=stats.norm.ppf(alpha/2.)*se
+    out=[m,m-cil,m+cil]
+    if not alpha2 is None:
+        cii=stats.norm.ppf(alpha2/2.)*se
+        out.extend([m-cii,m+cii])
+    out=np.array(out).T
+    if out.ndim==1: out=np.array([out])
+    for k in range(out.shape[0]):
+        _errorbar(out[k,:],x=x+k,clr=clr,vertical=verticalErrorbar)  
+    return out
 
-def plotCIttest1(y,x=0,alpha=0.05,clr=CLR):
+def plotCIttest1(y,x=0,alpha=0.05,clr=CLR,verticalErorbar=True):
     ''' single group t-test'''
     m=y.mean();df=y.size-1
     se=y.std()/y.size**0.5
     cil=stats.t.ppf(alpha/2.,df)*se
     cii=stats.t.ppf(0.25,df)*se
     out=[m,m-cil,m+cil,m-cii,m+cii]
-    _errorbar(out,x=x,clr=clr)
+    _errorbar(out,x=x,clr=clr,vertical=verticalErrorbar)
     return out
     
-def plotCIttest2(y1,y2,x=0,alpha=0.05,clr='k'):
+def plotCIttest2(y1,y2,x=0,alpha=0.05,clr='k',verticalErrorbar=True):
     n1=float(y1.size);n2=float(y2.size);
     v1=y1.var();v2=y2.var()
     m=y2.mean()-y1.mean()
@@ -253,44 +276,57 @@ def plotCIttest2(y1,y2,x=0,alpha=0.05,clr='k'):
     cil=stats.t.ppf(alpha/2.,df)*se
     cii=stats.t.ppf(0.25,df)*se
     out=[m,m-cil,m+cil,m-cii,m+cii]
-    _errorbar(out,x=x,clr=clr)
+    _errorbar(out,x=x,clr=clr,vertical=verticalErrorbar)
     return out
     
-def errorbar(y,clr=CLR,x=None,labels=None,plot=True):
+def errorbar(y,clr='k',x=None,pi=95,pi2=50,
+    labels=None,plot=True,verticalErrorbar=True,linkf=None):
     ''' customized error bars
         y - NxM ndarray containing results of
             N simulations of M random variables
         x - array with M elements, position of the bars on x axis 
         clr - bar color
         labels - array with xtickslabels
+        linkf - function that is used to transform parameters
 
         >>> errorbar(np.random.randn(1000,10)+1.96)    
     '''
     out=[]
+    if linkf is None: linkf=lambda x: x
     d=np.array(y);
     if d.ndim<2: d=np.array(y,ndmin=2).T
+    d=linkf(d)
     if not x is None: x=np.array(x)
     if x is None or x.size==0: x=np.arange(d.shape[1])
     elif x.size==1: x=np.ones(d.shape[1])*x[0]
     elif x.ndim!=1 or x.shape[0]!=d.shape[1]:
+        print('errorbar:dimension mismatch')
         x=np.arange(0,d.shape[1])
     ax=plt.gca()
+    aa=(100-pi)/2;
+    if not pi2 is None:bb=(100-pi2)/2
     for i in range(d.shape[1]):
-        out.append([np.median(d[:,i]),sap(d[:,i],2.5),sap(d[:,i],97.5),
-                    sap(d[:,i],25),sap(d[:,i],75)])
+        out.append([np.median(d[:,i]),sap(d[:,i],aa),sap(d[:,i],aa+pi)])
+        if not pi2 is None:out[-1].extend([sap(d[:,i],bb),sap(d[:,i],bb+pi2)])
         if len(clr)==d.shape[1]:c=clr[i]
         else: c=clr
-        if plot: _errorbar(out[-1],x=x[i],clr=c)
-    if plot:
+        if plot: _errorbar(out[-1],x=x[i],clr=c,vertical=verticalErrorbar)
+    if plot and verticalErrorbar:
         ax.set_xticks(x)
         if not labels is None: ax.set_xticklabels(labels)
         plt.xlim([np.floor(np.min(x)-1),np.ceil(np.max(x)+1)])
+    elif plot and not verticalErrorbar:
+        ax.set_yticks(x)
+        if not labels is None: ax.set_yticklabels(labels)
+        plt.ylim([np.floor(np.min(x)-1),np.ceil(np.max(x)+1)])
     return np.array(out)
 
-def pystanErrorbar(w,keys=None):
+def pystanErrorbar(w,keys=None,linkf=None):
     """ plots errorbars for variables in fit
-        fit - dictionary with data extracted from Pystan.StanFit instance 
+        fit - dictionary with data extracted from Pystan.StanFit instance
+        linkf - function that is used to transform parameters
     """
+    if linkf is None: linkf=lambda x: x
     kk=0
     ss=[];sls=[]
     if keys is None: 
@@ -306,29 +342,11 @@ def pystanErrorbar(w,keys=None):
         for h in range(d.shape[2]):
             kk+=1; figure(num=kk)
             #ppl.boxplot(plt.gca(),d[:,:,h],sym='')
-            errorbar(d[:,:,h])
+            errorbar(d[:,:,h],linkf=linkf)
             plt.title(k)
     #ss=np.array(ss)
     for i in range(len(ss)):
         print(sls[i], ss[i].mean(), 'CI [%.3f,%.3f]'%(sap(ss[i],2.5),sap(ss[i],97.5)))
-
-def fit2dict(fit,w0=None):
-    '''translates Stanfit data class to Python dictionary''' 
-    w=fit.extract()
-    
-    w['lp__']=w['lp__'][:,np.newaxis]
-    if not w0 is None:
-        for k in w.keys():
-            w[k]=np.concatenate([w0[k],w[k]],axis=1)
-    temp=fit.summary()
-    sumr=temp['summary']
-    w['nms']=temp['summary_rownames']
-    if not w0 is None: assert(np.all(w['nms']==w0['nms']))
-    if w0 is None: w['rhat']=sumr[np.newaxis,:,-1]
-    else: w['rhat']=np.concatenate([w0['rhat'],sumr[np.newaxis,:,-1]],axis=0)
-    return w
-
-
 def printCI(w,var=None,decimals=3):
     sfmt=' {:.{:d}f} [{:.{:d}f},{:.{:d}f}]'
     def _print(b):
@@ -341,27 +359,69 @@ def printCI(w,var=None,decimals=3):
         for i in range(d.shape[1]):
             _print(d[:,i])
     elif d.ndim==1: _print(d)
+
+def pearsonrCI(x,y,alpha=0.05):
+    r, p = stats.pearsonr(x,y)
+    r_z = np.arctanh(r)
+    se = 1/np.sqrt(x.size-3)
+    z = stats.norm.ppf(1-alpha/2)
+    lo_z, hi_z = r_z-z*se, r_z+z*se
+    lo, hi = np.tanh((lo_z, hi_z))
+    return r,lo, hi,p
     
-                
-def saveStanFit(fit,fname='test'):     
-    if fname.count(os.path.sep): path=''
-    else: path = os.getcwd()+os.path.sep+'standata'+os.path.sep
-    try: os.mkdir(path)
-    except: OSError
-    w=fit2dict(fit)
-    f=open(path+fname+'.stanfit','wb')
-    pickle.dump(w,f)
-    f.close()
-    #f=open(path+fname+'.check','w')
-    #f.write(str(fit))
-    #f.close()
-def loadStanFit(fname):
-    if fname.count(os.path.sep): path=''
-    else: path = os.getcwd()+os.path.sep+'standata'+os.path.sep
-    f=open(path+fname+'.stanfit','rb')
-    out=pickle.load(f)
-    f.close()
-    return out
+def printRhat(w):
+    from arviz import summary
+    print('checking convergence')
+    azsm=summary(w)
+    nms=azsm.axes[0].to_numpy()
+    rhat = azsm.to_numpy()[:,-1]
+    srt=np.argsort(rhat)
+    nms=nms[srt]
+    ess=np.zeros((srt.size,2)) 
+    ess[:,0]=azsm.to_numpy()[srt,-3]
+    ess[:,1]=azsm.to_numpy()[srt,-2]
+    rhat=np.sort(rhat)
+    stuff=np.array([nms,rhat])[:,::-1]
+    print(stuff[:,:10].T)
+    i=(rhat>1.1).nonzero()[0]
+    nms=nms.tolist()
+    nms.append('__lp')
+    nms=np.array(nms)[np.newaxis,:]
+    rhat=rhat.tolist()
+    rhat.append(-1)
+    rhat=np.array(rhat)[np.newaxis,:]
+    return i.size>0,nms,rhat,ess
+
+def saveStanFit(fit,dat,fname,model=None): 
+    converged,nms,rhat,ess=printRhat(fit)
+    w={'nms++':nms,'rhat++':rhat,'ess++':ess}
+    for k in fit.keys():w[k]=np.rollaxis(fit[k],-1,0)
+    for k in dat.keys():w[k+'+']=dat[k]
+    #w['model']=fit.get_stancode()
+    if not model==None:w['model_code++']=model
+    w['num_chains++']=fit.num_chains
+    with open(fname+'.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
+    return w 
+def loadStanFit(fname,excludeChains=[]):
+    with open(fname+'.wfit','rb') as f: w=pickle.load(f)
+    if len(excludeChains)==0: return w  
+    wnew={}
+    chinds=list(range(w['num_chains++']))
+    for ch in excludeChains: chinds.remove(ch)
+    #print(w.keys())
+    for k in w.keys():
+        if k[-1]=='+': continue 
+        wnew[k]=np.reshape(w[k],[w['num_chains++'],w[k].shape[0]//w['num_chains++']]+ list(w[k].shape[1:]),order='F')[chinds,]
+    converged,nms,rhat,ess=printRhat(wnew)
+    for k in wnew.keys():
+        wnew[k]=np.reshape(wnew[k],[wnew[k].shape[0]*wnew[k].shape[1]]+ list(wnew[k].shape[2:]),order='F')
+    for k in w.keys():
+        if k[-1]=='+':wnew[k]=w[k]  
+    wnew['nms++']=nms;wnew['rhat++']=rhat;wnew['ess++']=ess
+    #with open(fname+'.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
+    return wnew
+    
+    
 
 def ndarray2latextable(array,decim=2,hline=[0],vline=None,nl=1):
     ''' array - 2D numpy.ndarray with shape (rows,columns)
@@ -575,3 +635,63 @@ def plotMarkovChain(S,R,th=.2):
     plt.ylim([np.min(yd)-1,1+np.max(yd)])
     ax.set_aspect(1)
     plt.axis(False);
+    
+    
+def list2d2latextable(lst,decim=2,header=None,colheader=None):
+    ''' array - 2D numpy.ndarray with shape (rows,columns)
+        decim - decimal precision of float, use 0 for ints
+            should be int scalar or a list of list,len(decim)=nr cols
+    '''
+    assert(np.all(np.array(list(map(len,lst)))==len(lst[0])))
+    ecol=' \\\\\n';shp=(len(lst),len(lst[0]))
+    out='\\begin{table}\n\\centering\n\\begin{tabular}{|'+ \
+        ['l|',''][int(colheader is None)]+shp[1]*'r|'+'}\n\\hline\n'
+    if not header is None:
+        s=len(header)*'{} & '
+        out+=s.format(*header)[:-2]+ecol+'\\hline\n'   
+    for i in range(shp[0]):
+        if not colheader is None:
+            out+='%s & '%colheader[i]
+        for j in range(shp[1]):
+            if type(decim) is list: dc=decim[j]
+            else: dc=decim
+            if type(lst[i][j])==str:
+                out+='%s'%lst[i][j]
+            elif dc==0: out+='%d'%int(lst[i][j])
+            elif np.isnan(lst[i][j]): out+=' '
+            else:
+                flt='{: .%df}'%dc
+                out+=flt.format(np.round(lst[i][j],dc))
+            if j<shp[1]-1: out+=' & '
+        out+=ecol
+    out+='\\hline\n\\end{tabular}\n\\end{table}'
+    print(out)
+ 
+def mscorrcoef(x,y,N=0):
+    sel=np.logical_and(~np.isnan(x),~np.isnan(y))
+    r=np.corrcoef(x[sel],y[sel])[0,1]
+    z=np.log((1+r)/(1-r))/2
+    l=z-(1.96/(sel.sum()-3)**0.5)
+    u=z+(1.96/(sel.sum()-3)**0.5)
+    l=(np.exp(2*l)-1)/(np.exp(2*l)+1)
+    u=(np.exp(2*u)-1)/(np.exp(2*u)+1)
+    if N==0: return r,l,u,sel.sum()
+    res=np.zeros(N)
+    for i in range(N):
+        res[i]= np.corrcoef(np.random.permutation(x[sel]),y[sel])[0,1] 
+    return r,l,u,sel.sum(),np.median(res)   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
