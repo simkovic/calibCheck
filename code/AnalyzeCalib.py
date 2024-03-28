@@ -80,13 +80,14 @@ def readCalibGaze(fn):
     f.close() 
     return calib
     
-def getCMsingle(c,ctrue,normEnt=0,onepar=False):
+def getCM(c,ctrue,normEnt=0,onepar=False,residVec=False):
     ''' computes linear calibration 
         calibData - calibration data returned by readCalibGaze 
         omit - list contains label of
             calibration point to be ommited
             there were 9 calibration points, labeled from 
             left to right, top to bottom
+        onepar - does not work, needs fixing
         returns 
             - 1D array with calibration coefficients in format 
             [offset X, slope X, offset Y, slope Y]
@@ -100,26 +101,27 @@ def getCMsingle(c,ctrue,normEnt=0,onepar=False):
     assert(c.shape[1]==2)
     assert(np.all(np.isnan(c[:,0])==np.isnan(c[:,1])))
     sel=~np.isnan(c[:,0])
-    if sel.sum()<3: return coef,resid,c
+    if sel.sum()<[3,2][int(onepar)]: return coef,resid,c
     temp=np.zeros(sel.sum())
-    pred=[]
     for k in range(2):
         if onepar: x=np.ones((sel.sum(),1))
         else:x=np.column_stack([np.ones(sel.sum()),c[sel,k]])
         res =list(np.linalg.lstsq(x,ctrue[sel,k],rcond=None))
         if len(res[1])==0: return [np.nan,np.nan,np.nan,np.nan],np.nan,c
-        pred.append(x.dot(res[0]))
         if onepar: coef[k*2:(k+1)*2]=np.array([res[0][0],0])
         else: coef[k*2:(k+1)*2]=res[0]
-        temp+=np.square(ctrue[sel,k]-pred[-1])#res[1][0]
+        temp+=np.square(ctrue[sel,k]-x.dot(res[0]))#res[1][0]
     #resid=np.max(np.sqrt(temp))
     w=np.power(temp,normEnt)
     w=w/w.sum()
-    resid=np.sqrt((w*temp).sum())#*(sel.sum()**normEnt)/(sel.sum()**normEnt+(~sel).sum()**normEnt)*2
-    
-    #resid=np.sqrt(temp.mean())
+    if residVec: 
+        resid=np.zeros(c.shape[0])*np.nan
+        resid[~np.isnan(c[:,0])]=np.sqrt(temp)
+    else: 
+        resid=np.sqrt((w*temp).sum())#*(sel.sum()**normEnt)/(sel.sum()**normEnt+(~sel).sum()**normEnt)*2
+        assert(np.any(np.isnan(resid))==np.any(np.isnan(coef))) 
     assert(np.all(np.isnan(coef))==np.any(np.isnan(coef)))
-    assert(np.isnan(resid)==np.any(np.isnan(coef))) 
+    
     return coef,resid,c
 def cmPredict(y,coef):
     '''coef - 1D array with calibration coefficients in format 
@@ -129,43 +131,53 @@ def cmPredict(y,coef):
     return np.array([np.array([np.ones(y.shape[0]),y[:,0]]).T.dot(coef[:2]), np.array([np.ones(y.shape[0]),y[:,1]]).T.dot(coef[2:])]).T
 
 
+def selCPiter(c,ctrue,minNrCL,th,normEnt,onepar):
+    cm=list(getCM(c,ctrue,normEnt=normEnt,onepar=onepar))
+    co=cm.copy()
+    while np.isnan(co[2][:,0]).sum()<(c.shape[0]-minNrCL) and (co[1]>th):
+        ci=co.copy()
+        for k in range(c.shape[0]):
+            if np.isnan(co[2][k,0]): continue
+            cg=co[2].copy();cg[k,:]=np.nan
+            res=list(getCM(cg,ctrue,normEnt=normEnt,onepar=onepar))
+            if res[1]<ci[1]:ci=res
+        if th==0: print(ci[1],np.int32(~np.isnan(cg[:,0])))
+        if ci[1]<co[1]: co=ci
+        else: break
+    if co[1]<cm[1]:cm=co
+    if cm[1]>th or cm[0][1]<0 or cm[0][3]<0 or not np.isnan(c[:,0]).sum()<=(c.shape[0]-minNrCL): 
+        cm=[np.nan*np.ones(4),np.nan,np.zeros((c.shape[0],2))*np.nan]
+    return cm
 
-def selCPalgo(c,ctrue,replacement=None,MINVALIDCL=3,THACC=2.5,NORM=0,returnPars=False,onepar=False):
-    def _selCPalgo(c,ctrue):
-        c=np.copy(c);ctrue=np.copy(ctrue)
-        cm=list(getCMsingle(c,ctrue,normEnt=NORM))
-        co=cm.copy()
-        while np.isnan(co[2][:,0]).sum()<(c.shape[0]-MINVALIDCL) and (co[1]>THACC):
-            ci=co.copy()
-            for k in range(c.shape[0]):
-                if np.isnan(co[2][k,0]): continue
-                cg=co[2].copy();cg[k,:]=np.nan
-                res=list(getCMsingle(cg,ctrue,normEnt=NORM,onepar=onepar))
-                if res[1]<ci[1]:ci=res
-            if THACC==0: print(ci[1],np.int32(~np.isnan(cg[:,0])))
-            if ci[1]<co[1]: co=ci
-            else: break
-        if co[1]<cm[1]:cm=co
-        if cm[1]>THACC or cm[0][1]<0 or cm[0][3]<0 or not np.isnan(c[:,0]).sum()<=(c.shape[0]-MINVALIDCL): 
-            cm=[np.nan*np.ones(4),np.nan,np.zeros((c.shape[0],2))*np.nan]
-        out = np.int32(~np.isnan(cm[2][:,0]))
-        assert(out.sum()!=1)
-        if returnPars: return cm
-        else: return out
-    if replacement is None: return _selCPalgo(c,ctrue)
+
+def selCPalgo(c,ctrue,algo,minNrCL,repeat=None,threshold=None,
+    replacement=np.zeros((0,0,0)),normEnt=0,onepar=False):
+    if minNrCL<=0:minNrCL=c.shape[0]+minNrCL
+    def enoughCLs(res): return np.isnan(res[2][:,0]).sum()<=(c.shape[0]-minNrCL)
+    assert(repeat in ('block','trial',None))
+    if algo in ('local','avg'): assert(not threshold is None)
     res=[None,np.inf,c]
-    k=-1
-    while (np.any(np.isnan(res[2])) or res[1]>THACC) and k<replacement.shape[2]:
+    for k in range(-1,replacement.shape[2]):
         if k>=0:
             sel=np.isnan(res[2][:,0])
             res[2][sel,:]=replacement[sel,:,k]
-        resnew=_selCPalgo(res[2],ctrue)
-        if not np.all(np.isnan(resnew[2][:,0])):res=resnew
+        if algo=='local' or algo=='valid': 
+            res=list(getCM(np.copy(res[2]),np.copy(ctrue),normEnt=normEnt, onepar=onepar,residVec=True))
+            if algo=='local':res[2][res[1]>threshold,:]=np.nan
+        elif algo=='iter':
+            res=selCPiter(np.copy(res[2]),np.copy(ctrue),minNrCL=minNrCL,normEnt=normEnt,onepar=onepar,th=threshold)
+        elif algo=='avg':
+            res=list(getCM(np.copy(res[2]),np.copy(ctrue),normEnt=normEnt, onepar=onepar))
+            if repeat in ('block',None) and (res[1]>threshold):res[2][:,:]=np.nan
+        
+        if not enoughCLs(res) and repeat in ('block',None): res[2][:,:]=np.nan
+        if enoughCLs(res) and (np.all(res[1]<threshold) or algo=='valid'): break
+        
         k+=1
-    if res[0] is None: res=[np.nan*np.ones(4),np.nan,np.zeros((c.shape[0],2))*np.nan]
+    if res[0] is None or not enoughCLs(res): res=[np.nan*np.ones(4),np.nan,np.zeros((c.shape[0],2))*np.nan]
     res.append(k)
-    if returnPars:return res
-    else: return np.int32(~np.isnan(res[2][:,0]))
+    return res
+    #if not returnPars: return np.int32(~np.isnan(res[2][:,0]))
 
 
 def plotCMsingle(calibData,eye,cm=None,ofn=None,lim=[30,20],c=[22,11.5]):
@@ -394,7 +406,7 @@ def chunits(inn,dva,hvd=None,frd=None):
     #elif dva==8:  x=55*(cm-hvd)/frd
     return x    
     
-def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.3,dva=0): 
+def extractFixations(inG,eye,thvel=10,hz=60,minDur=0.06,dva=0): 
     AX=np.newaxis
     res=np.ones((9,7))*np.nan
     if len(inG)==0: return res
@@ -517,7 +529,7 @@ def dpworker(G,thacc,thvel,minDur,dva):
     return R,included 
 
    
-def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.3,dva=0,verbose=False,ncpu=8):  
+def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.06,dva=0,verbose=False,ncpu=8):  
     ''' the processing code is in dpworker(), this is just a wrapper
         for parallel application of dpworker
     '''              
@@ -917,7 +929,7 @@ def figurePreproc():
 
     
 
-def computeVarAll(fn,addSMI=False,transform=0,predictors=0,quick=False,eye=2):
+def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
     ''' compute accuracy estimates with the three-level model
         fn - suffix of the ds file with input data
         dev - device: 0=Tobii, 1=SMI
@@ -930,135 +942,6 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,quick=False,eye=2):
             - 2: accuracy predictors are log-linear w.r.t. standard deviation
         quick - use 1000 MC iterations of each chain
     '''
-    addSMI=int(addSMI)
-    trns=['','sqrt','exp','abs'][transform]
-    pn=['','+nas*age[n]'][predictors]
-    pm=['','+mms*(m-1)+mas[(m>3)+1]*age[n]'][predictors]
-    po=['','+ods[(m>3)+1]*dist[n,m,p]+oms*(m-1)+oas[(m>3)+1]*age[n]'][predictors]
-    lbs=['0','-10'][int(transform==2)]
-    model=f'''
-    data {{
-        int<lower=0> N; //nr subjects
-        vector[2] y[N,6,9];
-        vector[2] c[N,6,9];
-        real age[N];
-        real dist[N,6,9];
-    }}parameters{{
-        vector<lower=-100,upper=100>[2] o[N,6];
-        real<lower=-10,upper=10> r[2,N];
-        vector<lower={lbs},upper=10>[2] sy[2];
-        vector<lower={lbs},upper=10>[2] so[2];
-        vector<lower=-100,upper=100>[2] mo[2,N];
-        vector<lower={lbs},upper=10>[2] sm[2];
-        vector<lower=-100,upper=100>[2] mm[2];
-        real<lower=0,upper=10> sr[2];
-        real<lower=-10,upper=10> mr[2];'''+['','''
-        vector<lower=-10,upper=10>[2] nas;
-        vector<lower=-10,upper=10>[2] ods[2];
-        vector<lower=-10,upper=10>[2] mms;
-        vector<lower=-10,upper=10>[2] mas[2];
-        vector<lower=-10,upper=10>[2] oms;
-        vector<lower=-10,upper=10>[2] oas[2];'''][predictors]+f'''
-    }} model {{
-        for (n in 1:N){{
-            mo[1][n]~normal(mm[1],{trns}(sm[1]{pn}));
-            mo[2][n]~normal(mm[2],{trns}(sm[2]{pn}));
-            r[1][n]~normal(mr[1],sr[1]);
-            r[2][n]~normal(mr[2],sr[2]);
-        for (m in 1:6){{
-            o[n,m]~normal(mo[(m>3)+1][n],{trns}(so[(m>3)+1]{pm}));
-        for (p in 1:9){{
-            if (! is_nan(y[n,m,p][1]))
-                c[n,m,p]~normal(o[n,m]+r[(m>3)+1][n]*y[n,m,p],
-                    {trns}(sy[(m>3)+1]{po}));}}}}}}}}'''
-                    
-    pn=['','+nas[k]*age'][predictors]  
-    pm=['','+mms[k]*(m-1)+mas[k][(m>3)+1]*age'][predictors]
-    po=['','+oas[k,(m>3)+1]*age[n]'][predictors]           
-    model=f'''
-    data {{
-        int<lower=0> N; //nr subjects
-        real y[N,6,9,2];
-        int mask[N,6];
-        real c[N,6,9,2];
-        vector[N] age;
-        real dist[N,6,9];
-        int<lower=0> J; // nr non-nan observations
-    }}transformed data{{
-    vector[J] yv;vector[J] cv;
-    int M=3;
-    int map[N,M,9,2];
-    int j=1;
-    for (m in 1:M){{
-    for (n in 1:N){{
-        if (mask[n,m]==1){{
-        for (p in 1:9){{
-            if (! is_nan(y[n,m,p,1])){{
-                for (k in 1:2){{
-                    yv[j]=y[n,m,p,k];
-                    cv[j]=c[n,m,p,k];
-                    map[n,m,p,k]=j;}}
-                j=j+1;
-    }}}}}}}}}}
-    }}parameters{{
-        vector<lower=-100,upper=100>[N] o[2,M];
-        vector<lower=-10,upper=10>[N] r;
-        real<lower=0,upper=20> sy[2];
-        real<lower=0,upper=10> so[2];
-        vector<lower=-100,upper=100>[N] mo[2];
-        real<lower=0,upper=10> sm[2];
-        real<lower=-100,upper=100> mm[2];
-        real<lower=0,upper=10> sr;
-        real<lower=-10,upper=10> mr;'''+['','''
-        real<lower=-10,upper=10> nas[2];
-        //vector<lower=-10,upper=10>[2] ods;
-        real<lower=-10,upper=10> mms[2];
-        real<lower=-10,upper=10> mas[2,2];
-        real<lower=-10,upper=10> oms[2];
-        real<lower=-10,upper=10> oas[2,2];'''][predictors]+f'''
-        //real<lower=5> s2[2];
-        //vector<lower=-100,upper=100>[N] t;
-        //real<lower=0,upper=100> mt[2];real<lower=0,upper=100> st;
-        //real<lower=-100,upper=100> ta;real<lower=-100,upper=100> tm;
-        //real<lower=0,upper=300> gsm[2,2,2];
-    }}transformed parameters{{
-    vector[J] pars[3,2];
-    //vector[J] part;
-    for (m in 1:M){{
-    for (n in 1:N){{
-        if (mask[n,m]==1){{
-        for (p in 1:9){{
-            if (! is_nan(y[n,m,p,1])){{
-            for (k in 1:2){{
-                pars[1,k][map[n,m,p,k]]=o[k,m,n];
-                pars[2,k][map[n,m,p,k]]=r[n];
-                pars[3,k][map[n,m,p,k]]=sy[k]{po};
-                }}
-            //part[map[n,m,p,1]]=t[n];
-    }}}}}}}}}}
-    for (jj in 1:J){{
-    for (k in 1:2){{
-        if (is_nan(pars[1,k][jj])) print(9999999);}}}}
-    }} model {{
-        //vector[J] lps[2];
-        //lps[1]=log_inv_logit(part); 
-        //lps[2]=log1m_inv_logit(part);
-        for (k in 1:2){{
-            mo[k]~normal(mm[k],(sm[k]{pn}));
-            if (k==1) r~normal(mr,sr);
-            //sy[k,e]~gamma(gsm[k,e,1],gsm[k,e,2]);
-            for (m in 1:M){{
-                o[k,m]~normal(mo[k],so[k]{pm});
-                //if (k==1) t~normal(mt+tm*(m-1)+ta*age,st);
-                }}
-        target+=normal_lpdf(yv|pars[1,k]+pars[2,k].*cv,pars[3,k]);
-        //lps[2]+=normal_lpdf(yv|pars[1,k],s2[k]); 
-    }}}}'''
-    
-    pn=['','+nas[k,e]*age'][predictors]  
-    pm=['','+mms[k]*(m-2)+mas[k,e]*age'][predictors]#
-    po=['','+oas[k,(m>3)+1]*age[n]+ods[k,1,(m>3)+1]*dist[n,m,p]+ods[k,2,(m>3)+1]*abs(dist[n,m,p])+oms[k,(m>3)+1]*(P[m]+p-10)'][predictors]#
-    lbs=['0','-10'][int(transform==2)]
     mdata=f'''
     data {{
         int<lower=0> N; //nr subjects
@@ -1071,92 +954,29 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,quick=False,eye=2):
         vector[N] age;
         real dist[N,M,9];
     '''
-    model=mdata+f'''
-    }}parameters{{
-        vector<lower=-100,upper=100>[N] o[2,M];
-        vector<lower=-10,upper=10>[N] r[E];
-        real<lower={lbs},upper=20> sy[2,E];
-        real<lower={lbs},upper=10> so[2,E];
-        vector<lower=-100,upper=100>[N] mo[2,E];
-        real<lower={lbs},upper=10> sm[2,E];
-        real<lower=-100,upper=100> mm[2,E];
-        real<lower=0,upper=10> sr[E];
-        real<lower=-10,upper=10> mr[E];'''+['','''
-        real<lower=-10,upper=10> nas[2,E];
-        real<lower=-10,upper=10> ods[2,2,E];
-        real<lower=-10,upper=10> mms[2];
-        real<lower=-10,upper=10> mas[2,E];
-        real<lower=-10,upper=10> oms[2,E];
-        real<lower=-10,upper=10> oas[2,E];'''][predictors]+f'''
-        real<lower=5> s2[2,E];
-        vector<lower=-100,upper=100>[N] t[M];
-        real<lower=-100,upper=100> mt; real<lower=0,upper=100> st;
-        real<lower=-100,upper=100> nat;
-        real<lower=-100,upper=100> mmt;
-        real<lower=-100,upper=100> omt;
-        real<lower=-100,upper=100> qmt[E];
-        //real<lower=0,upper=300> gsm[2,2];
-    }} model {{
-        real lps[2];
-        real tmp;
-        for (e in 1:E){{ 
-            r[e]~normal(mr[e],sr[e]);
-        for (k in 1:2){{
-            mo[k,e]~normal(mm[k,e],({trns}(sm[k,e]{pn})));
-            //sy[k]~gamma(gsm[k,1],gsm[k,2]);
-            for (m in 1:M) o[k,m]~normal(mo[k,(m>3)+1],{trns}(so[k,(m>3)+1]{pm}));}}}}
-        //t~normal(mt+nat*age,st);
-        for (m in 1:M){{
-        t[m]~normal(mt+mmt*(m-2)+nat*age,st);//+mmt*(m-2)
-        for (n in 1:N){{
-        if (mask[n,m]==1){{
-        for (p in 1:(P[m+1]-P[m])){{
-            tmp=t[m][n]+omt*(P[m]+p-P[E*2])+qmt[(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3));
-            if ( (! is_nan(y[n,m,p,1])) ){{ //&& distance(to_vector(c[n,m,p]),to_vector(y[n,m,p]))<7
-                lps[1]=log_inv_logit(tmp); 
-                lps[2]=log1m_inv_logit(tmp);
-                for (k in 1:2){{
-                    lps[1]+=normal_lpdf(y[n,m,p,k]|o[k,m,n]+r[(m>3)+1][n].*c[n,m,p,k],{trns}(sy[k,(m>3)+1]{po}));
-                    lps[2]+=normal_lpdf(y[n,m,p,k]|o[k,m,n],s2[k,(m>3)+1]); 
-                 }}
-                target+= log_sum_exp(lps);
-                }}
-            else target+=log1m_inv_logit(tmp);
-        }}}}}}}}}}'''  
-        
-    modell=mdata+f'''
-    }}parameters{{
-        vector<lower=-100,upper=100>[N] t;
-        real<lower=-100,upper=100> mt;
-        real<lower=0,upper=100> st;
-        real<lower=-100,upper=100> nat;
-        real<lower=-100,upper=100> mmt;
-        real<lower=-100,upper=100> omt;
-        real<lower=-100,upper=100> qmt;
-    }} model {{
-        real lps[2];
-        real tmp;
-        t~normal(mt+nat*age+mmt*(m-2),st);//
-        for (m in 1:M){{
-        for (n in 1:N){{
-        if (mask[n,m]==1){{
-        for (p in 1:(P[m+1]-P[m])){{
-            //tmp=t[m,(m>3)+1][n]+omt*(P[m]+p-10)+qmt*(m==2)*( (p==2)+(p==3));
-            tmp=t[n]+qmt*((m==2)+(m==5))*((p==2)+(p==3));
-            if (! is_nan(y[n,m,p,1])) target+= log_inv_logit(tmp);
-            else target+=log1m_inv_logit(tmp);
-        }}}}}}}}}}''' 
+
+    addSMI=int(addSMI)
+    trns=['','sqrt','exp','abs'][transform]
+    pn=['','+nas[k,e]*age'][predictors]  
     po=['','+oas[k,(m>3)+1]*age[n]+ods[k,1,(m>3)+1]*dist[n,m,p]+ods[k,2,(m>3)+1]*abs(dist[n,m,p])+oms[k,(m>3)+1]*(P[m]+p-10)+mms[k]*(m-2)+oqs[k,(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3))'][predictors]# 
     s2min=[5,1.6][int(transform==2)]
+    lbs=['0','-10'][int(transform==2)]
     model=mdata+f'''
     }}parameters{{
         vector<lower=-100,upper=100>[N] o[2,E];
-        vector<lower=-10,upper=10>[N] r[E];
+        vector<lower=-10,upper=10>[N] r[2,E];
         real<lower={lbs},upper=20> sy[2,E];
         real<lower={lbs},upper=10> sm[2,E];
         real<lower=-100,upper=100> mm[2,E];
-        real<lower=0,upper=10> sr[E];
-        real<lower=-10,upper=10> mr[E];'''+['','''
+        real<lower=0,upper=10> sr[2,E];
+        real<lower=-10,upper=10> mr[2,E];
+        real<lower=-10,upper=10> nam[2,E];
+        real<lower=-10,upper=10> odm[2,2,E];
+        real<lower=-10,upper=10> mmm[2];
+        real<lower=-10,upper=10> omm[2,E];
+        real<lower=-10,upper=10> oqm[2,E];
+        real<lower=-10,upper=10> oam[2,E];
+        '''+['','''
         real<lower=-10,upper=10> nas[2,E];
         real<lower=-10,upper=10> ods[2,2,E];
         real<lower=-10,upper=10> mms[2];
@@ -1180,23 +1000,22 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,quick=False,eye=2):
         real lps[2];
         real tmp;
         real tmpnan;
-        for (e in 1:E){{ 
-            r[e]~normal(mr[e],sr[e]);
         for (k in 1:2){{
-            o[k,e]~normal(mm[k,e],({trns}(0.1*(sm[k,e]{pn}))));}}}}
-        //t~normal(mt+nat*age,st);
+        for (e in 1:E){{ 
+            r[k,e]~normal(mr[k,e],sr[k,e]);
+            o[k,e]~normal(mm[k,e]+nam[k,e]*age,({trns}(0.1*(sm[k,e]{pn}))));}}}}
+        t~normal(mt+nat*age,st);
         for (m in 1:M){{
-        t[m]~normal(mt+mmt*(m-2)+nat*age,st);//+mmt*(m-2)
         for (n in 1:N){{
         if (mask[n,m]==1){{
         for (p in 1:(P[m+1]-P[m])){{
-            tmp=t[m][n]+omt*(p-10+P[m])+qmt[(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3));
+            tmp=t[n]+mmt*(m-2)+omt*(p-10+P[m])+qmt[(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3));
             tmpnan=onan[(m>3)+1]+pnan*(p-10+P[m])+qnan[(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3))+mnan*(m-2)+anan*age[n];
             if ( (! is_nan(y[n,m,p,1])) ){{ //&& distance(to_vector(c[n,m,p]),to_vector(y[n,m,p]))<7
                 lps[1]=log_inv_logit(tmp); 
                 lps[2]=log1m_inv_logit(tmp);
                 for (k in 1:2){{
-                    lps[1]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+r[(m>3)+1][n].*c[n,m,p,k],{trns}(0.1*(sy[k,(m>3)+1]{po})));
+                    lps[1]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+r[(m>3)+1][n].*c[n,m,p,k]+oam[k,(m>3)+1]*age[n]+odm[k,1,(m>3)+1]*dist[n,m,p]+odm[k,2,(m>3)+1]*abs(dist[n,m,p])+omm[k,(m>3)+1]*(P[m]+p-10)+mmm[k]*(m-2)+oqm[k,(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3)),{trns}(0.1*(sy[k,(m>3)+1]{po})));
                     lps[2]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n],{trns}(s2[k,(m>3)+1])); 
                  }}
                 target+= log_sum_exp(lps)+log1m_inv_logit(tmpnan);
@@ -1276,7 +1095,6 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,quick=False,eye=2):
         fit = sm.sample(num_chains=6,num_thin=10,num_samples=5000,num_warmup=5000)
         saveStanFit(fit,dat,DPATH+f'sd2L06{fn}{transform}{eye}{predictors}{addSMI}',model=modeldist)
         stop
-    ssmm=[10,1][int(quick)]
     on=np.ones((2,dat['E']))
     on1=np.ones(2)
     print(model)
@@ -1288,9 +1106,9 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,quick=False,eye=2):
             'ods':np.ones((2,2,dat['E']))*.01,'sm':on*.5,'so':on*.5,'sy':on*.5}
     tmp['mt']=0;tmp['t']=np.zeros((y.shape[0],y.shape[1])).T
     sm = stan.build(program_code=model,data=dat,random_seed=SEED) 
-    fit = sm.sample(num_chains=6,num_thin=5,#int(max(ssmm*1,1)),
-        num_samples=2000,#int(ssmm*500),
-        num_warmup=2000,#int(ssmm*500)
+    fit = sm.sample(num_chains=6,num_thin=int(max(ssmm*1,1)),
+        num_samples=int(ssmm*500),
+        num_warmup=int(ssmm*500)
         init=[tmp]*6)
     saveStanFit(fit,dat,DPATH+f'sm2L10{fn}{transform}{eye}{predictors}{addSMI}',model=model)
     
@@ -1530,61 +1348,63 @@ def generateFakeDataHT(age,Ms,P,Cs=None,Es=None,Nd=None,pnan=None,pOT=None,
         np.save('data/geno'+fn,fit['onTarget'])
         np.save('data/genc'+fn,dat['c'])
 
-def fakedataCalibrationWorker(L,e,nCP=100,selCPa=True,selPred=10):
+def fakedataCalibrationWorker(L,e,nCP=100,selPred=10):
+    import itertools
     y=np.rollaxis(np.load(f'data/genyLfkPref{L}{e}.npy'),-1,0)
     o=np.rollaxis(np.load(f'data/genoLfkPref{L}{e}.npy'),-1,0)
     c=np.load(f'data/c.npy')
     c=np.vstack([c,c])
-    gzh=np.zeros((y.shape[0],y.shape[1],7,5,2))*np.nan
-    mask=np.zeros(list(y.shape[:3])+[2],dtype=np.bool_)
+    als=['avg','local','valid']
+    ks=[3,-1]#[3,-1,0]
+    I=np.reshape(np.arange((len(als))*3*(len(ks)+2)),[len(als),3,len(ks)+2])
+    gzh=np.zeros((y.shape[0],y.shape[1],I.size,5,2))*np.nan
+    mask=np.zeros(list(y.shape[:3])+[I.size],dtype=np.bool_)
+    
     for i in range(y.shape[0]):
-        for r in range(2):
-            todo=[]
-            for n in range(y.shape[1]):
-            #eP=w['P+'][0][1]
-                #rpl=np.rollaxis(np.reshape(np.copy(y[i,n,np.newaxis,L+11:,:]),(2,-1,2)),0,3)
-                rpl=y[i,n,L+11:2*L+11,:,np.newaxis]
-                resNP=selCPalgo(y[i,n,:L,:],c[:L,:],MINVALIDCL=3, THACC=1.75,returnPars=True,replacement=[None,rpl][r])#1.75 
-                mask[i,n,:L,r]=~np.isnan(resNP[2][:,0])
-                #if not selCPa: 
-                #    sel=o[i,n,:L]==1
-                #    resNP=getCMsingle(y[i,n,:L,:][sel,:],c[:L,:][sel,:])
-                #    mask[i,n,:L,r][sel]=True
-                if r==1: 
-                    gzh[i,n,r*3,:,:]=cmPredict(y[i,n,L+resNP[3]:L+5+resNP[3],:],resNP[0])
-                    todo.append(n) 
-                    if not np.isnan(resNP[0][0]): 
-                        for do in todo:
-                            gzh[i,do,5,:,:]=cmPredict(y[i,do,L:L+5,:],resNP[0])
-                        todo=[]
-                    resNP1p=selCPalgo(y[i,n,:L,:],c[:L,:],MINVALIDCL=2, THACC=1.75,returnPars=True,replacement=[None,rpl][r],onepar=True)
-                    gzh[i,n,6,:,:]=cmPredict(y[i,n,L:L+5,:],resNP1p[0])
-                else: gzh[i,n,r*3,:,:]=cmPredict(y[i,n,L:L+5,:],resNP[0])
+        todo=[]
+        for n in range(y.shape[1]):
+            #rpl=y[i,n,L+11:2*L+11,:,np.newaxis]
+            rpl=np.rollaxis(np.reshape(np.copy(y[i,n,np.newaxis,L+11:3*L+11,:]),(2,-1,2)),0,3)
+
+            for a,r,k in itertools.product(range(len(als)),range(I.shape[1]),range(len(ks))):
+                res=selCPalgo(y[i,n,:L,:],c[:L,:],threshold=[3.5,3.5,np.inf,1.75][a],minNrCL=ks[k],#[4,1.5,np.inf,1.75]
+                    repeat=[None,'block','trial'][r],algo=als[a],
+                    replacement=[np.zeros((0,0,0)),rpl][int(r>0)])#1.75 
+                if k==0: mask[i,n,:L,I[a,r,0]]=~np.isnan(res[2][:,0])
+                gzh[i,n,I[a,r,k],:,:]=cmPredict(y[i,n,L:L+5,:],res[0])
+            if False:            
+                #NP+U
+                todo.append(n) 
+                if not np.isnan(resNP[0][0]): 
+                    for do in todo:
+                        gzh[i,do,2,:,:]=cmPredict(y[i,do,L:L+5,:],resNP[0])
+                    todo=[]
+                #NP1p
+                resNP1p=selCPalgoTrialwise(y[i,n,:L,:],c[:L,:],MINVALIDCL=2, THACC=3.1,returnPars=True,onepar=True)
+                gzh[i,n,3,:,:]=cmPredict(y[i,n,L:L+5,:],resNP1p[0])
     for i in range(y.shape[0]):
-        for r in range(2):  
-            a=np.vstack([y[i-1,:nCP,:L,0][mask[i-1,:nCP,:L,r]],y[i-1,:nCP,:L,1][mask[i-1,:nCP,:L,r]]]).T
-            ctrue=np.vstack([np.repeat(c[np.newaxis,:L,0],nCP,axis=0)[mask[i-1,:nCP,:L,r]],
-                            np.repeat(c[np.newaxis,:L,1],nCP,axis=0)[mask[i-1,:nCP,:L,r]]]).T
-            resCP=getCMsingle(a,ctrue)
-            for n in range(y.shape[1]):
-                gzh[i,n,r*3+1,:,:]=cmPredict(y[i,n,L+6:L+11,:],resCP[0])
-                if r==0:
-                    tmp=cmPredict(y[i,n,L:L+5,:],resCP[0])
-                    for m in range(L,L+5):
-                        #for d in range(2):  
-                        assert(np.isnan(gzh[i,n,0,m-L,0])==np.isnan(gzh[i,n,0,m-L,1]))    
-                        if np.isnan(gzh[i,n,0,m-L,0]): gzh[i,n,2,m-L,:]=tmp[m-L,:] 
-                        else:gzh[i,n,2,m-L,:]=gzh[i,n,0,m-L,:]
-                    for h in range(gzh.shape[2]):
-                        for m in range(L,L+5):
-                            if np.linalg.norm(gzh[i,n,h,m-L,:])>selPred: gzh[i,n,h,m-L,:]=np.nan     
+        #CP 
+        for a,r in itertools.product(range(len(als)),range(I.shape[1])):
+            aa=np.vstack([y[i-1,:nCP,:L,0][mask[i-1,:nCP,:L,I[a,r,0]]],y[i-1,:nCP,:L,1][mask[i-1,:nCP,:L,I[a,r,0]]]]).T
+            ctrue=np.vstack([np.repeat(c[np.newaxis,:L,0],nCP,axis=0)[mask[i-1,:nCP,:L,I[a,r,0]]],
+                            np.repeat(c[np.newaxis,:L,1],nCP,axis=0)[mask[i-1,:nCP,:L,I[a,r,0]]]]).T
+            resCP=getCM(aa,ctrue)
+            for n in range(y.shape[1]): 
+                gzh[i,n,I[a,r,-1],:,:]=cmPredict(y[i,n,L+6:L+11,:],resCP[0])
+                #NP+CP        
+                tmp=cmPredict(y[i,n,L:L+5,:],resCP[0])
+                for m in range(L,L+5):     
+                    if np.isnan(gzh[i,n,I[a,r,0],m-L,0]): gzh[i,n,I[a,r,-2],m-L,:]=tmp[m-L,:] 
+                    else:gzh[i,n,I[a,r,-2],m-L,:]=gzh[i,n,I[a,r,0],m-L,:]
+                    for k in range(I.shape[2]):
+                        if np.linalg.norm(gzh[i,n,I[a,r,k],m-L,:])>selPred: gzh[i,n,I[a,r,k],m-L,:]=np.nan     
     return gzh
 
 def fakedataCalibration(e=1,ncpu=4,fn=''):
     from multiprocessing import Pool
     pool=Pool(ncpu)
     res=[]
-    Ls=[3,5,9,18]
+    Ls=[3,5,9]
     for h in range(len(Ls)):
         temp=pool.apply_async(fakedataCalibrationWorker,[Ls[h],e])
         res.append(temp)
@@ -1633,7 +1453,7 @@ def fakedataTTestPowerWorker(fn,ess,alpha,beta):
     return n
 def fakedataTTestPower(suf,ncpu=4,alpha=0.05,beta=.8):
     if suf=='NMG': ess=np.linspace(.1,2.1,21)
-    else: ess=np.linspace(.2,3.2,21)
+    else: ess=np.linspace(.5,1.5,21)
     from multiprocessing import Pool
     pool=Pool(ncpu)
     res=[]
@@ -1666,12 +1486,12 @@ if __name__=='__main__':
     tp='MGsp10'#'NMG'
     for e in [2,1]:
         for a in [4,7,10]:
-            for b in [3,5,9,18]:
+            for b in [3,5,9]:
                 generateFakeDataHT(age=a,Ms=b*[0]+[1,2,3,4,5,6]+[0,1,2,3,4]+b*[1]+b*[2],
                     P=list(range(b+6))+list(range(5))+b*[b]+b*[b+1], 
                     Cs=(np.mod(np.arange(b),9)+1).tolist()+11*[1]+2*(np.mod(np.arange(b),9)+1).tolist(),
                     N=200,fn=f'LfkPref{b}{e}', pOT=[-1]*b+11*[[-1,1][tp=='NMG']]+[-1]*b*2,Es=7*[e],K=10)#,Nd=6*[45])   
-            fakedataCalibration(e,fn=f'{a}m{tp}')
+            fakedataCalibration(e,fn=f'{a}m{tp}')   
     fakedataTTestPower(tp);stop
     generateFakeDataHT(age=7,Ms=9*[0]+5*[1]+5*[2]+9*[3]+5*[4]+5*[5],P=np.arange(38), Cs=np.array(list(range(9))+2*list(range(5))+list(range(9))+2*list(range(5)))+1, Es=[1,1,1,2,2,2], Nd=[55,45,65,55,45,65],N=-1,fn='empExp',savefit=True);stop
     
@@ -1681,7 +1501,8 @@ if __name__=='__main__':
     D=loadCalibrationData(fns)
     with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
     with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
-    dataPreprocessing(D,f'dsThaccInf');
+    dataPreprocessing(D,f'dsFixTh1_0dva2',thacc=1,dva=2);
+    #dataPreprocessing(D,f'dsThaccInf');
     computeVarAll('ThaccInfdva0',transform=2,predictors=1,quick=False,addSMI=1);
     # replicate experiment
     Xqmt=np.zeros((6,9));Xqmt[1,[1,2]]=1;Xqmt[4,[1,2]]=1
