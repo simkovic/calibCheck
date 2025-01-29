@@ -1,4 +1,4 @@
-import os,stan,pickle
+import os,pickle,stan
 import numpy as np
 import pylab as plt
 from matusplotlib import saveStanFit,loadStanFit
@@ -7,10 +7,12 @@ MD=70 #monitor distance used to compute deg visual angle in the output files
 #position of calibration points
 CTRUE=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],[0,-11]]) # true calibration locations in degrees
 #CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion locations in cm
-SEED=8 # the seed of random number generator was fixed to make the analyses replicable
+SEED=9 # the seed of random number generator was fixed to make the analyses replicable
 TC,TS,F,LX,LY,RX,RY,BX,BY,LD=range(10); RD=12;BD=15
 DPI=500 #figure resolution
 DPATH='data'+os.path.sep  
+DPATHX='/run/media/matus/backup/research/work/K018/code/dataL/'#'/run/media/matus/ext/data/'
+FIGPATH='../publication/fig/'
 ##########################################################################
 # DATA LOADING ROUTINES
 ##########################################################################
@@ -76,11 +78,11 @@ def readCalibGaze(fn):
     for i in range(len(calib)):
         if len(calib[i][-1])<9: calib[i].pop()
         calib[i]=np.array(calib[i])
-        if np.ndim(calib[i])<2: bla
+        if np.ndim(calib[i])<2: stop
     f.close() 
     return calib
     
-def getCM(c,ctrue,normEnt=0,onepar=False,residVec=False):
+def getCM(c,ctrue,normEnt=0,onepar=False):
     ''' computes linear calibration 
         calibData - calibration data returned by readCalibGaze 
         omit - list contains label of
@@ -93,7 +95,7 @@ def getCM(c,ctrue,normEnt=0,onepar=False,residVec=False):
             [offset X, slope X, offset Y, slope Y]
             - residual
             - array with omitted calibration points
-            - (median) gaze location on each of calibration points
+            - residual at each calib. location
     '''
     coef=[np.nan,np.nan,np.nan,np.nan]
     resid=np.nan
@@ -101,28 +103,25 @@ def getCM(c,ctrue,normEnt=0,onepar=False,residVec=False):
     assert(c.shape[1]==2)
     assert(np.all(np.isnan(c[:,0])==np.isnan(c[:,1])))
     sel=~np.isnan(c[:,0])
-    if sel.sum()<[3,2][int(onepar)]: return coef,resid,c
+    if sel.sum()<[3,2][int(onepar)]: return coef,resid,c,c[:,0]*np.nan
     temp=np.zeros(sel.sum())
     for k in range(2):
         if onepar: x=np.ones((sel.sum(),1))
         else:x=np.column_stack([np.ones(sel.sum()),c[sel,k]])
         res =list(np.linalg.lstsq(x,ctrue[sel,k],rcond=None))
-        if len(res[1])==0: return [np.nan,np.nan,np.nan,np.nan],np.nan,c
+        if len(res[1])==0: return [np.nan,np.nan,np.nan,np.nan],np.nan,c,c[:,0]*np.nan
         if onepar: coef[k*2:(k+1)*2]=np.array([res[0][0],0])
         else: coef[k*2:(k+1)*2]=res[0]
         temp+=np.square(ctrue[sel,k]-x.dot(res[0]))#res[1][0]
     #resid=np.max(np.sqrt(temp))
     w=np.power(temp,normEnt)
     w=w/w.sum()
-    if residVec: 
-        resid=np.zeros(c.shape[0])*np.nan
-        resid[~np.isnan(c[:,0])]=np.sqrt(temp)
-    else: 
-        resid=np.sqrt((w*temp).sum())#*(sel.sum()**normEnt)/(sel.sum()**normEnt+(~sel).sum()**normEnt)*2
-        assert(np.any(np.isnan(resid))==np.any(np.isnan(coef))) 
+    residVec=np.zeros(c.shape[0])*np.nan
+    residVec[~np.isnan(c[:,0])]=np.sqrt(temp) 
+    resid=np.sqrt((w*temp).sum())#*(sel.sum()**normEnt)/(sel.sum()**normEnt+(~sel).sum()**normEnt)*2
+    assert(np.any(np.isnan(resid))==np.any(np.isnan(coef))) 
     assert(np.all(np.isnan(coef))==np.any(np.isnan(coef)))
-    
-    return coef,resid,c
+    return coef,resid,c,residVec
 def cmPredict(y,coef):
     '''coef - 1D array with calibration coefficients in format 
             [offset X, slope X, offset Y, slope Y]
@@ -150,35 +149,39 @@ def selCPiter(c,ctrue,minNrCL,th,normEnt,onepar):
     return cm
 
 
+
 def selCPalgo(c,ctrue,algo,minNrCL,repeat=None,threshold=None,
     replacement=np.zeros((0,0,0)),normEnt=0,onepar=False):
     if minNrCL<=0:minNrCL=c.shape[0]+minNrCL
     def enoughCLs(res): return np.isnan(res[2][:,0]).sum()<=(c.shape[0]-minNrCL)
     assert(repeat in ('block','trial',None))
     if algo in ('local','avg'): assert(not threshold is None)
-    res=[None,np.inf,c]
+    res=[None,np.inf,c,0]
     for k in range(-1,replacement.shape[2]):
         if k>=0:
             sel=np.isnan(res[2][:,0])
             res[2][sel,:]=replacement[sel,:,k]
         if algo=='local' or algo=='valid': 
-            res=list(getCM(np.copy(res[2]),np.copy(ctrue),normEnt=normEnt, onepar=onepar,residVec=True))
-            if algo=='local':res[2][res[1]>threshold,:]=np.nan
+            res=list(getCM(np.copy(res[2]),np.copy(ctrue),normEnt=normEnt, onepar=onepar))
+            if algo=='local':res[2][res[3]>threshold,:]=np.nan   
         elif algo=='iter':
             res=selCPiter(np.copy(res[2]),np.copy(ctrue),minNrCL=minNrCL,normEnt=normEnt,onepar=onepar,th=threshold)
         elif algo=='avg':
             res=list(getCM(np.copy(res[2]),np.copy(ctrue),normEnt=normEnt, onepar=onepar))
             if repeat in ('block',None) and (res[1]>threshold):res[2][:,:]=np.nan
-        
-        if not enoughCLs(res) and repeat in ('block',None): res[2][:,:]=np.nan
-        if enoughCLs(res) and (np.all(res[1]<threshold) or algo=='valid'): break
-        
+            elif repeat=='trial' and (res[1]>threshold): res[2][np.argmax(res[3]),:]=np.nan
+        #if not enoughCLs(res) and repeat in ('block',None): res[2][:,:]=np.nan
         k+=1
-    if res[0] is None or not enoughCLs(res): res=[np.nan*np.ones(4),np.nan,np.zeros((c.shape[0],2))*np.nan]
-    res.append(k)
+        #if enoughCLs(res) and (np.all(res[1]<threshold) or algo=='valid'): break
+        if enoughCLs(res): break
+        elif repeat in ('block',None): 
+            res[2][:,:]=np.nan 
+            if repeat is None: break
+    if res[0] is None or not enoughCLs(res): res=[np.nan*np.ones(4),np.nan,np.zeros((c.shape[0],2))*np.nan,k]
+    res[3]=k
     return res
     #if not returnPars: return np.int32(~np.isnan(res[2][:,0]))
-
+    #if not returnPars: return np.int32(~np.isnan(res[2][:,0]))
 
 def plotCMsingle(calibData,eye,cm=None,ofn=None,lim=[30,20],c=[22,11.5]):
     ''' plots calibration data
@@ -929,7 +932,7 @@ def figurePreproc():
 
     
 
-def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
+def fitMDGP(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
     ''' compute accuracy estimates with the three-level model
         fn - suffix of the ds file with input data
         dev - device: 0=Tobii, 1=SMI
@@ -954,13 +957,12 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
         vector[N] age;
         real dist[N,M,9];
     '''
-
     addSMI=int(addSMI)
     trns=['','sqrt','exp','abs'][transform]
     pn=['','+nas[k,e]*age'][predictors]  
+    lbs=['0','-10'][int(transform==2)]    
     po=['','+oas[k,(m>3)+1]*age[n]+ods[k,1,(m>3)+1]*dist[n,m,p]+ods[k,2,(m>3)+1]*abs(dist[n,m,p])+oms[k,(m>3)+1]*(P[m]+p-10)+mms[k]*(m-2)+oqs[k,(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3))'][predictors]# 
     s2min=[5,1.6][int(transform==2)]
-    lbs=['0','-10'][int(transform==2)]
     model=mdata+f'''
     }}parameters{{
         vector<lower=-100,upper=100>[N] o[2,E];
@@ -974,8 +976,7 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
         real<lower=-10,upper=10> odm[2,2,E];
         real<lower=-10,upper=10> mmm[2];
         real<lower=-10,upper=10> omm[2,E];
-        real<lower=-10,upper=10> oqm[2,E];
-        real<lower=-10,upper=10> oam[2,E];
+        //real<lower=-10,upper=10> oqm[2,E];
         '''+['','''
         real<lower=-10,upper=10> nas[2,E];
         real<lower=-10,upper=10> ods[2,2,E];
@@ -984,7 +985,7 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
         real<lower=-10,upper=10> oqs[2,E];
         real<lower=-10,upper=10> oas[2,E];'''][predictors]+f'''
         real<lower={s2min}> s2[2,E];
-        vector<lower=-100,upper=100>[N] t[M];
+        vector<lower=-100,upper=100>[N] t;
         real<lower=-100,upper=100> mt; real<lower=0,upper=100> st;
         real<lower=-100,upper=100> nat;
         real<lower=-100,upper=100> mmt;
@@ -1000,8 +1001,8 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
         real lps[2];
         real tmp;
         real tmpnan;
-        for (k in 1:2){{
         for (e in 1:E){{ 
+        for (k in 1:2){{
             r[k,e]~normal(mr[k,e],sr[k,e]);
             o[k,e]~normal(mm[k,e]+nam[k,e]*age,({trns}(0.1*(sm[k,e]{pn}))));}}}}
         t~normal(mt+nat*age,st);
@@ -1015,8 +1016,8 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
                 lps[1]=log_inv_logit(tmp); 
                 lps[2]=log1m_inv_logit(tmp);
                 for (k in 1:2){{
-                    lps[1]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+r[(m>3)+1][n].*c[n,m,p,k]+oam[k,(m>3)+1]*age[n]+odm[k,1,(m>3)+1]*dist[n,m,p]+odm[k,2,(m>3)+1]*abs(dist[n,m,p])+omm[k,(m>3)+1]*(P[m]+p-10)+mmm[k]*(m-2)+oqm[k,(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3)),{trns}(0.1*(sy[k,(m>3)+1]{po})));
-                    lps[2]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n],{trns}(s2[k,(m>3)+1])); 
+                    lps[1]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+r[k,(m>3)+1][n].*c[n,m,p,k]+odm[k,1,(m>3)+1]*dist[n,m,p]+odm[k,2,(m>3)+1]*abs(dist[n,m,p])+omm[k,(m>3)+1]*(P[m]+p-10)+mmm[k]*(m-2),{trns}(0.1*(sy[k,(m>3)+1]{po})));
+                    lps[2]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+odm[k,1,(m>3)+1]*dist[n,m,p]+odm[k,2,(m>3)+1]*abs(dist[n,m,p])+omm[k,(m>3)+1]*(P[m]+p-10)+mmm[k]*(m-2),{trns}(s2[k,(m>3)+1])); 
                  }}
                 target+= log_sum_exp(lps)+log1m_inv_logit(tmpnan);
                 }}
@@ -1029,19 +1030,21 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
         for (n in 1:N){{
         if (mask[n,m]==1){{
         for (p in 1:(P[m+1]-P[m])){{
-            tmpTemp=t[m][n]+omt*(p-10+P[m])+qmt[(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3));
+            tmpTemp=t[n]+mmt*(m-2)+omt*(p-10+P[m])+qmt[(m>3)+1]*((m==2)+(m==5))*((p==2)+(p==3));
             if ( (! is_nan(y[n,m,p,1])) ){{ 
                 lpsTemp[1]=log_inv_logit(tmpTemp); 
                 lpsTemp[2]=log1m_inv_logit(tmpTemp);
                 for (k in 1:2){{
-                    lpsTemp[1]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+r[(m>3)+1][n].*c[n,m,p,k],{trns}(0.1*(sy[k,(m>3)+1]{po})));
-                    lpsTemp[2]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n],{trns}(s2[k,(m>3)+1])); 
+                    lpsTemp[1]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+r[k,(m>3)+1][n].*c[n,m,p,k]+odm[k,1,(m>3)+1]*dist[n,m,p]+odm[k,2,(m>3)+1]*abs(dist[n,m,p])+omm[k,(m>3)+1]*(P[m]+p-10)+mmm[k]*(m-2),{trns}(0.1*(sy[k,(m>3)+1]{po})));
+                    lpsTemp[2]+=normal_lpdf(y[n,m,p,k]|o[k,(m>3)+1,n]+odm[k,1,(m>3)+1]*dist[n,m,p]+odm[k,2,(m>3)+1]*abs(dist[n,m,p])+omm[k,(m>3)+1]*(P[m]+p-10)+mmm[k]*(m-2),{trns}(s2[k,(m>3)+1])); 
                  }}
                 onTargetGen[n,m,p]=exp(lpsTemp[1]-log_sum_exp(lpsTemp));
                 }}
             else onTargetGen[n,m,p]=0; 
-        }}}}}}}}}}'''        
-    pn=['','+nas*age'][predictors]  #TODO remove age preds
+        }}}}}}}}}}'''  
+                
+             
+    pn=['','+nas*age'][predictors]  
     po=['','+oas*age[n]+oms*(P[m]+p-10)+mms*(m-2)'][predictors]# 
     modeldist=mdata+f'''
         real nomdist [M];
@@ -1069,11 +1072,6 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
                 dist[n,m,p]~normal(o[n]+nomdist[m]+emm*(m>3)+omm*(P[m]+p-10)+mmm*(m-2)+qmm*(to_int(p==2) + to_int(p==3)),{trns}(sy{po}));
         }}}}}}}}}}}}'''  
 
-
-         
-    #with open(DPATH+f'smHADER{transform}.pkl', 'wb') as f: pickle.dump(sm, f)
-    #with open(DPATH+f'smHADER{transform}.pkl', 'rb') as f: sm=pickle.load(f)
-    #with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
     ds=np.load(DPATH+f'ds{fn}.npy')
     ds=np.hstack((ds[0,:],ds[1,:]))
     if addSMI==2: ds=ds[:,3:,:,:,:]
@@ -1088,13 +1086,12 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
     mask=np.int32(~np.all(np.isnan(y[:,:,:,0]),axis=2))
     print(y.shape)
     dat={'y':y,'N':y.shape[0],'c':c,'age':age,'dist':dist,'mask':mask,'M':y.shape[1],'P':[0,9,14,19,28,33,38],'E':y.shape[1]//3}#'J':(~np.isnan(y[:,:3,:,:])).sum()//2
-    if False:
-        print(modeldist)
-        dat['nomdist']=(np.array([55,45,65,55,45,65])-55)/10
-        sm = stan.build(program_code=modeldist,data=dat,random_seed=SEED) 
-        fit = sm.sample(num_chains=6,num_thin=10,num_samples=5000,num_warmup=5000)
-        saveStanFit(fit,dat,DPATH+f'sd2L06{fn}{transform}{eye}{predictors}{addSMI}',model=modeldist)
-        stop
+
+    print(modeldist)
+    dat['nomdist']=(np.array([55,45,65,55,45,65])-55)/10
+    sm = stan.build(program_code=modeldist,data=dat,random_seed=SEED) 
+    fit = sm.sample(num_chains=6,num_thin=10,num_samples=5000,num_warmup=5000)
+    saveStanFit(fit,dat,DPATH+f'sd2L07{fn}{transform}{eye}{predictors}{addSMI}',model=modeldist)
     on=np.ones((2,dat['E']))
     on1=np.ones(2)
     print(model)
@@ -1104,13 +1101,19 @@ def computeVarAll(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
     else:
         tmp={'mas':on*.01,'oas':on*.01,'nas':on*.01,'mms':on1*.01,'oms':on*.01,
             'ods':np.ones((2,2,dat['E']))*.01,'sm':on*.5,'so':on*.5,'sy':on*.5}
-    tmp['mt']=0;tmp['t']=np.zeros((y.shape[0],y.shape[1])).T
+    tmp['mt']=0;tmp['t']=np.zeros(y.shape[0])  
+         
+    if transform==2: 
+        tmp={'mas':on*0,'oas':on*0,'nas':on*0,'mms':on1*0,'oms':on*0,
+            'ods':np.ones((2,2,dat['E']))*0,'sm':on*0,'so':on*0,'sy':on*0}
+    else:
+        tmp={'mas':on*.01,'oas':on*.01,'nas':on*.01,'mms':on1*.01,'oms':on*.01,
+            'ods':np.ones((2,2,dat['E']))*.01,'sm':on*.5,'so':on*.5,'sy':on*.5}
+    tmp['mt']=0;tmp['t']=np.zeros(y.shape[0]).T
     sm = stan.build(program_code=model,data=dat,random_seed=SEED) 
-    fit = sm.sample(num_chains=6,num_thin=int(max(ssmm*1,1)),
-        num_samples=int(ssmm*500),
-        num_warmup=int(ssmm*500)
-        init=[tmp]*6)
-    saveStanFit(fit,dat,DPATH+f'sm2L10{fn}{transform}{eye}{predictors}{addSMI}',model=model)
+    fit = sm.sample(num_chains=7,num_thin=int(max(ssmm*1,1)),
+        num_samples=int(ssmm*500),num_warmup=int(ssmm*500),init=[tmp]*7)
+    saveStanFit(fit,dat,DPATH+f'sm2L13{fn}{transform}{eye}{predictors}{addSMI}',model=model)
     
 def _avgDist(h,v,N=10000000,lim=None):
     ''' return average expected distance E[sqrt(x^2+y^2)]
@@ -1244,12 +1247,9 @@ def plotSlopeAll(trns):
     w=perturb('so',2,'oms',4,dev=1,w=w)
     plotVarAll(0,1,w=w,saveFig=False)
     perturb('sy',2,'ods',1,dev=1)
-    
- 
 
-
-def generateFakeDataHT(age,Ms,P,Cs=None,Es=None,Nd=None,pnan=None,pOT=None,
-    N=-1,K=1000,fn='',savefit=False):
+def generateFakeDataHT(age,Ms,P,Cs=None,Es=None,Nd=None,
+    N=-1,K=1000,fn='',savefit=False,numChains=1):
     ''' age - in months
         Ms - array with calibration order (starting from 0) for each calibration
         P - array with 2-element list for each calibration, first element gives the 
@@ -1264,67 +1264,72 @@ def generateFakeDataHT(age,Ms,P,Cs=None,Es=None,Nd=None,pnan=None,pOT=None,
     if Es is None: Es=np.ones(len(np.unique(Ms)),dtype=np.int32)
     if Nd is None: Nd=55*np.ones(len(np.unique(Ms)))
     if Cs is None: return #TODO
-    if pOT is None: pOT=-np.ones(len(Ms))
-    if pnan is None: pnan=-np.ones(len(Ms))
     mdat='''
         '''
     model='''data {
         int N,M,E,L; array[L] int P;array[L] int Ms;array[M] int MMs;array[M] int Es;
-        array[L] int<lower=1,upper=9> Cs;array[L] real pnan;array[L] real pOnTarget;
-        array[9,2] real c;array[N] real age;array[M] real nomdist;
-        array[2,E] real sy;array[2,E] real sm;array[2,E] real mm;array[E] real sr;
-        array[E] real mr;array[2,E] real nas;array[2,2,E] real ods;array[2] real mms;
-        array[2,E] real oms;array[2,E] real oas; array[2,E] real s2;
-        real mt,st,nat,mmt,omt;array[E] real qmt;
-        real mmD,mmmD,qmmD,ommD,emmD,syD,smD,namD,nasD,mmsD,omsD,oasD;
+        //array[L] int<lower=1,upper=9> Cs;
+        array[N,L,2,2] real c;array[N] real age;array[M] real nomdist;
+        array[2,E] real sy;array[2,E] real sm;array[2,E] real mm;array[2,E] real sr;
+        array[2,E] real mr;array[2,E] real nas;array[2,2,E] real ods;array[2] real mms;array[2,2,E] real odm;array[2,E] real omm;array[2] real mmm;
+        array[2,E] real oms;array[2,E] real oas;array[2,E] real oqs; array[2,E] real s2;
+        real mt,st,nat,mmt,omt;array[E] real qmt;array[E] real onan;array[E] real qnan;
+        real mmD,mmmD,qmmD,ommD,emmD,syD,smD,namD,nasD,mmsD,omsD,oasD,anan,pnan,mnan;
+        array[2,E] real nam;
     } transformed data{
-        array[L] int Xqmt;
-        for (l in 1:L) Xqmt[l]=(nomdist[Ms[l]]==-1)*((Cs[l]==2) + (Cs[l]==3));
+        array[N,L] int Xqmt;
+        for (n in 1:N){
+        for (l in 1:L) Xqmt[n,l]=(nomdist[Ms[l]]==-1)*(c[n,l,1,2]>10);}
     } generated quantities{
         array[N,L] int onTarget;array[N,L,2] real y;
-        array[N,L] real<lower=-2.5,upper=4> dist;//hard limits at 30 and 95 cm
+        array[N,L] real dist;//hard limits at 30 and 95 cm <lower=-2.5,upper=4>
+        array[N,L,2,2] real cr;
         array[2,E] vector[N] o;array[N] real oD;
-        array[M] vector[N] t;array[E] vector[N] r;vector[2] temp;
-        int nodat;
+        vector[N] t;array[2,E] vector[N] r;vector[2] temp;
+        array[N] real agevar;
+        int nodat;array[L] real lpnodat;
         for (n in 1:N){
-            oD[n]=normal_rng(mmD+namD*age[n],exp(smD+nasD*age[n]));
+            if (age[n]==-7) agevar[n]=uniform_rng(-3,3); 
+            else agevar[n]=age[n];
+            oD[n]=normal_rng(mmD+namD*agevar[n],exp(smD+nasD*agevar[n]));
         for (e in 1:E){
-            r[e,n]=normal_rng(mr[e],sr[e]);
-        for (k in 1:2) o[k,e,n]=normal_rng(mm[k,e],(exp(0.1*(sm[k,e]+nas[k,e]*age[n]))));}}
-        
-        
-        
+            
+        for (k in 1:2){ 
+            r[k,e,n]=normal_rng(mr[k,e],sr[k,e]);
+            o[k,e,n]=normal_rng(mm[k,e]+nam[k,e]*agevar[n],(exp(0.1*(sm[k,e]+nas[k,e]*agevar[n]))));}}}
+
         for (n in 1:N){
-        for (m in 1:M){
-            t[m][n]=normal_rng(mt+mmt*(MMs[m]-2)+nat*age[n],st);}
+            t[n]=normal_rng(mt+nat*agevar[n],st);
         for (l in 1:L){
-            nodat=bernoulli_rng(pnan[l]);
+            lpnodat[l]=onan[Es[Ms[l]]]+pnan*(P[l]-9)+qnan[Es[Ms[l]]]*Xqmt[n,l]+mnan*(Ms[l]-2)+anan*agevar[n];
+            nodat=bernoulli_logit_rng(lpnodat[l]);
             if (nodat==1){
                 dist[n,l]=4;//0.0/0;
                 onTarget[n,l]=0;
                 y[n,l,1]=0.0/0;
                 y[n,l,2]=0.0/0;
             }else{
-            dist[n,l]=normal_rng(oD[n]+nomdist[Ms[l]]+emmD*Es[Ms[l]]+ommD*(P[l]-9)+mmmD*(Ms[l]-2)+qmmD*(to_int(Cs[l]==2) + to_int(Cs[l]==3)),exp(syD+oasD*age[n]+omsD*(P[l]-9)+mmsD*(Ms[l]-2)));
-            temp[2]=1-pnan[l];
-            if (pOnTarget[l]==-1)   temp[1]=inv_logit(t[Ms[l]][n]+omt*(P[l]-9)+qmt[Es[Ms[l]]]*Xqmt[l]);
-            else temp[1]=temp[2]*pOnTarget[l];
+            dist[n,l]=normal_rng(oD[n]+nomdist[Ms[l]]+emmD*(Es[Ms[l]]-1)+ommD*(P[l]-9)+mmmD*(Ms[l]-2)+qmmD*Xqmt[n,l],exp(syD+oasD*agevar[n]+omsD*(P[l]-9)+mmsD*(Ms[l]-2)));
+            temp[2]=1-inv_logit(lpnodat[l]);
+            temp[1]=inv_logit(t[n]+mmt*(Ms[l]-2) +omt*(P[l]-9)+qmt[Es[Ms[l]]]*Xqmt[n,l]);
             if (temp[1]>=temp[2]) onTarget[n,l]=1;
             else onTarget[n,l]=bernoulli_rng(temp[1]/temp[2]);
 
             for (k in 1:2){
-            if (onTarget[n,l]==1) y[n,l,k]=normal_rng(o[k,Es[Ms[l]],n]+r[Es[Ms[l]],n]*c[Cs[l],k],exp(0.1*(sy[k,Es[Ms[l]]]+oas[k,Es[Ms[l]]]*age[n]+ods[k,1,Es[Ms[l]]]*dist[n,l]+ods[k,2,Es[Ms[l]]]*abs(dist[n,l])+oms[k,Es[Ms[l]]]*(P[l]-9)+mms[k]*(Ms[l]+2))));
-            else y[n,l,k]=normal_rng(o[k,Es[Ms[l]],n],exp(s2[k,Es[Ms[l]]]));
-            }}}}}'''     
+            cr[n,l,1,k]=atan2(c[n,l,1,k],dist[n,l]*10+55)/pi()*180;//translate to deg with dist in cm
+            cr[n,l,2,k]=atan2(c[n,l,2,k],dist[n,l]*10+55)/pi()*180;//distractor
+            if (onTarget[n,l]==1) y[n,l,k]=normal_rng(o[k,Es[Ms[l]],n]+r[k,Es[Ms[l]],n]*cr[n,l,1,k]+odm[k,1,Es[Ms[l]]]*dist[n,l]+odm[k,2,Es[Ms[l]]]*abs(dist[n,l])+omm[k,Es[Ms[l]]]*(P[l]-9)+mmm[k]*(Ms[l]-2),exp(0.1*(sy[k,Es[Ms[l]]]+oas[k,Es[Ms[l]]]*agevar[n]+ods[k,1,Es[Ms[l]]]*dist[n,l]+ods[k,2,Es[Ms[l]]]*abs(dist[n,l])+oms[k,Es[Ms[l]]]*(P[l]-9)+mms[k]*(Ms[l]-2)+oqs[k,Es[Ms[l]]]*Xqmt[n,l])));
+            else y[n,l,k]=normal_rng(o[k,Es[Ms[l]],n]+odm[k,1,Es[Ms[l]]]*dist[n,l]+odm[k,2,Es[Ms[l]]]*abs(dist[n,l])+omm[k,Es[Ms[l]]]*(P[l]-9)+mmm[k]*(Ms[l]-2),exp(s2[k,Es[Ms[l]]]));
+            }}}}}'''   
     dat={'M':len(np.unique(Ms)),'MMs':np.unique(Ms)+1,'Ms':np.array(Ms)+1,'L':len(P),
-        'P':P,'E':2,'nomdist':(np.array(Nd)-55)/10,'Es':Es,'Cs':Cs}
-    w=loadStanFit(f'data/sd2L06ThaccInfdva02211',excludeChains=[])
+        'P':P,'E':2,'nomdist':(np.array(Nd)-55)/10,'Es':Es}
+    w=loadStanFit(f'data/sd2L07FixTh1_0dva22211',excludeChains=[])
     for k in w.keys():
         if not k[-1]=='+' and not k in ('o'):
             #print(k,w[k].shape)
             dat[k+'D']=np.squeeze(np.median(w[k],0))
             assert(np.all(~np.isnan(dat[k+'D'])))
-    w=loadStanFit(f'data/sm2L09ThaccInfdva02211',excludeChains=[])
+    w=loadStanFit(f'data/sm2L13FixTh1_0dva22211',excludeChains=[3],computeRhat=False)
     if N==-1:dat['N']=w['N+'];
     else:dat['N']=N
     dat['yold']=w['y+'];dat['distold']=w['dist+']
@@ -1334,133 +1339,165 @@ def generateFakeDataHT(age,Ms,P,Cs=None,Es=None,Nd=None,pnan=None,pOT=None,
             #print(k,w[k].shape) 
             dat[k]=np.squeeze(np.median(w[k],0))
             assert(np.all(~np.isnan(dat[k])))
-    
-    #dat['c']=np.nanmedian(w['c+'][:,0,:5,:],0)#todo 
-    dat['c']=chunits(CTRUE,dva=0) 
-    dat['pnan']=pnan;dat['pOnTarget']=pOT
-    for l in range(len(Ms)):
-        if dat['pnan'][l]==-1:dat['pnan'][l]=np.exp(dat['lpnan'])
+    dat['c']=[]
+    for n in range(dat['N']):
+        dat['c'].append([])
+        for i in range(len(Cs)):
+            if type(Cs[i]) is int:
+                dat['c'][-1].append([list(chunits(CTRUE[Cs[i]-1,:],dva=0)),[0,0]])
+            else: 
+                if np.mod(n,2)==0: dat['c'][-1].append([np.array(Cs[i]),-np.array(Cs[i])])
+                else: dat['c'][-1].append([-np.array(Cs[i]),np.array(Cs[i])])
+    dat['c']=np.array(dat['c'])
+    assert(np.all(dat['c'][:,0,1,:]==0))
+    #for l in range(len(Ms)):if dat['pnan'][l]==-1:dat['pnan'][l]=np.exp(dat['lpnan'])
     sm = stan.build(program_code=model,data=dat,random_seed=SEED) 
-    fit = sm.fixed_param(num_chains=5,num_samples=K//5)
-    if savefit: saveStanFit(fit,dat,'data/gen'+fn,model=model)
+    fit = sm.fixed_param(num_chains=numChains,num_samples=K)
+    assert(not np.all(np.isnan(fit['y'][:,:,:,0])))
+    if savefit:
+        w=saveStanFit(fit,dat,DPATHX+'gen'+fn,model=model,computeRhat=False)
     else: 
-        np.save('data/geny'+fn,fit['y'])
-        np.save('data/geno'+fn,fit['onTarget'])
-        np.save('data/genc'+fn,dat['c'])
-
-def fakedataCalibrationWorker(L,e,nCP=100,selPred=10):
+        np.save(DPATHX+'gcR'+fn,fit['y'])
+        #np.save(DPATHX+'dist'+fn,fit['dist'])
+        np.save(DPATHX+'cl'+fn,fit['cr'])
+    del sm, fit
+def fakedataCalibrationWorker(L,fn,nCP=50,ect=10):
     import itertools
-    y=np.rollaxis(np.load(f'data/genyLfkPref{L}{e}.npy'),-1,0)
-    o=np.rollaxis(np.load(f'data/genoLfkPref{L}{e}.npy'),-1,0)
-    c=np.load(f'data/c.npy')
-    c=np.vstack([c,c])
+    y=np.rollaxis(np.load(DPATHX+f'gcR{L}{fn}.npy'),-1,0)
+    #o=np.rollaxis(np.load(f'data/genoLfkPref{L}{fn}.npy'),-1,0)
+    c=np.rollaxis(np.load(DPATHX+f'cl{L}{fn}.npy'),-1,0)
+    #c=np.vstack([c,c])
     als=['avg','local','valid']
-    ks=[3,-1]#[3,-1,0]
+    ks=[3,0]#[3,-1,0]
     I=np.reshape(np.arange((len(als))*3*(len(ks)+2)),[len(als),3,len(ks)+2])
-    gzh=np.zeros((y.shape[0],y.shape[1],I.size,5,2))*np.nan
-    mask=np.zeros(list(y.shape[:3])+[I.size],dtype=np.bool_)
+    gzh=np.zeros((y.shape[0],y.shape[1],I.size,15,2))*np.nan
+    mask=np.zeros(list(y.shape[:2])+[L,I.size],dtype=np.bool_)
     
     for i in range(y.shape[0]):
         todo=[]
         for n in range(y.shape[1]):
             #rpl=y[i,n,L+11:2*L+11,:,np.newaxis]
-            rpl=np.rollaxis(np.reshape(np.copy(y[i,n,np.newaxis,L+11:3*L+11,:]),(2,-1,2)),0,3)
+            rpl=np.rollaxis(np.reshape(np.copy(y[i,n,np.newaxis,L:3*L,:]),(2,-1,2)),0,3)
 
             for a,r,k in itertools.product(range(len(als)),range(I.shape[1]),range(len(ks))):
-                res=selCPalgo(y[i,n,:L,:],c[:L,:],threshold=[3.5,3.5,np.inf,1.75][a],minNrCL=ks[k],#[4,1.5,np.inf,1.75]
+                res=selCPalgo(y[i,n,:L,:],c[i,n,:L,0,:],threshold= [4,1.5,np.inf][a],minNrCL=ks[k],#[3.5,3.5,np.inf,1.75]
                     repeat=[None,'block','trial'][r],algo=als[a],
                     replacement=[np.zeros((0,0,0)),rpl][int(r>0)])#1.75 
-                if k==0: mask[i,n,:L,I[a,r,0]]=~np.isnan(res[2][:,0])
-                gzh[i,n,I[a,r,k],:,:]=cmPredict(y[i,n,L:L+5,:],res[0])
-            if False:            
-                #NP+U
-                todo.append(n) 
-                if not np.isnan(resNP[0][0]): 
-                    for do in todo:
-                        gzh[i,do,2,:,:]=cmPredict(y[i,do,L:L+5,:],resNP[0])
-                    todo=[]
-                #NP1p
-                resNP1p=selCPalgoTrialwise(y[i,n,:L,:],c[:L,:],MINVALIDCL=2, THACC=3.1,returnPars=True,onepar=True)
-                gzh[i,n,3,:,:]=cmPredict(y[i,n,L:L+5,:],resNP1p[0])
+                if k==0: mask[i,n,:,I[a,r,0]]=~np.isnan(res[2][:,0])
+                if not int(res[3]) in (0,1,2): print(res[3])
+                assert(int(res[3]) in (0,1,2))
+                gzh[i,n,I[a,r,k],:5,:]=cmPredict(y[i,n,(3*L+res[3]):(3*L+res[3]+5),:],res[0])
+                gzh[i,n,I[a,r,k],5:,:]=cmPredict(y[i,n,(3*L+7+10*res[3]):(3*L+7+10*(res[3]+1)),:],res[0])
     for i in range(y.shape[0]):
         #CP 
         for a,r in itertools.product(range(len(als)),range(I.shape[1])):
-            aa=np.vstack([y[i-1,:nCP,:L,0][mask[i-1,:nCP,:L,I[a,r,0]]],y[i-1,:nCP,:L,1][mask[i-1,:nCP,:L,I[a,r,0]]]]).T
-            ctrue=np.vstack([np.repeat(c[np.newaxis,:L,0],nCP,axis=0)[mask[i-1,:nCP,:L,I[a,r,0]]],
-                            np.repeat(c[np.newaxis,:L,1],nCP,axis=0)[mask[i-1,:nCP,:L,I[a,r,0]]]]).T
+            aa=np.vstack([y[i-1,:nCP,:L,0][mask[i-1,:nCP,:,I[a,r,0]]],y[i-1,:nCP,:L,1][mask[i-1,:nCP,:,I[a,r,0]]]]).T
+            ctrue=np.vstack([c[i-1,:nCP,:L,0,0][mask[i-1,:nCP,:,I[a,r,0]]],
+                            c[i-1,:nCP,:L,0,1][mask[i-1,:nCP,:,I[a,r,0]]]]).T
             resCP=getCM(aa,ctrue)
             for n in range(y.shape[1]): 
-                gzh[i,n,I[a,r,-1],:,:]=cmPredict(y[i,n,L+6:L+11,:],resCP[0])
+                gzh[i,n,I[a,r,-1],:,:]=cmPredict(y[i,n,(3*L+37):,:],resCP[0])
                 #NP+CP        
-                tmp=cmPredict(y[i,n,L:L+5,:],resCP[0])
-                for m in range(L,L+5):     
-                    if np.isnan(gzh[i,n,I[a,r,0],m-L,0]): gzh[i,n,I[a,r,-2],m-L,:]=tmp[m-L,:] 
-                    else:gzh[i,n,I[a,r,-2],m-L,:]=gzh[i,n,I[a,r,0],m-L,:]
+                #tmp=cmPredict(y[i,n,3*L+2:(3*L+17),:],resCP[0])#TODO add res[3]
+                for m in range(gzh.shape[3]):     
+                #if np.isnan(gzh[i,n,I[a,r,0],m,0]): gzh[i,n,I[a,r,-2],m,:]=tmp[m,:] 
+                #else:gzh[i,n,I[a,r,-2],m,:]=gzh[i,n,I[a,r,0],m,:]
                     for k in range(I.shape[2]):
-                        if np.linalg.norm(gzh[i,n,I[a,r,k],m-L,:])>selPred: gzh[i,n,I[a,r,k],m-L,:]=np.nan     
-    return gzh
+                        if np.linalg.norm(gzh[i,n,I[a,r,k],m,:]-c[i,n,(3*L+37)+m,0,:])>ect and np.linalg.norm(gzh[i,n,I[a,r,k],m,:]-c[i,n,(3*L+37)+m,1,:])>ect:
+                            gzh[i,n,I[a,r,k],m,:]=np.nan    
+    np.save(DPATHX+f'gcC{L}{fn}',gzh) 
+    return
 
-def fakedataCalibration(e=1,ncpu=4,fn=''):
+def fakedataCalibration(fn,b,S,ncpu=4,suf=''):
     from multiprocessing import Pool
     pool=Pool(ncpu)
     res=[]
-    Ls=[3,5,9]
-    for h in range(len(Ls)):
-        temp=pool.apply_async(fakedataCalibrationWorker,[Ls[h],e])
+    for i in range(13,S):
+        temp=pool.apply_async(fakedataCalibrationWorker,[b,f'{fn}{i:02d}'])
         res.append(temp)
     pool.close()  
     from time import time,sleep
-    tot=len(Ls)
+    tot=len(res)
     t0=time();prevdone=-1
     while True:
         done=0
         for r in res:
             done+=int(r.ready())
+            if done>prevdone:
+                prevdone=done
+                print(done,' out of ',tot)
         sleep(1)
         if done==tot: break
+    
     gz=[]
-    for n in range(tot):
-        gz.append(res[n].get())
-    es=['tob','smi'][e-1] 
-    np.save(f'data/gz{fn}{es}',gz)
+    for i in range(S):
+        gz.append(res[i].get())
+    return
+    #gz=np.reshape(gz,[3,51])
+    np.save(DPATHX+f'gcC{b}{fn}{suf}',gz)
 
-def fakedataTTestPowerWorker(fn,ess,alpha,beta):
-    def evalPower(dat):
+def fakedataTTestPowerWorker(fn,ax,alpha,beta,test):
+    def evalPowerTtest(indat):
+        dr=np.ones((1,indat.shape[1]))
+        dr[0,1::2]=-1
+        dat=dr*np.copy(indat)# remove side balancing
         p=np.zeros(dat.shape[0])*np.nan
         for i in range(dat.shape[0]):
             sel=~np.isnan(dat[i,:])
             if sel.sum()>2:
-                p[i]=ttest_1samp(dat[i,sel]+es/2,0,alternative='greater')[1]
+                p[i]=ttest_1samp(dat[i,sel],0,alternative='greater')[1]
                 if np.isnan(p[i]):
                     print(dat[i,sel]);stop
-        return (p<alpha).mean()>beta
+        res=(p<alpha).mean()>(1-beta)
+        #del dr,p
+        return res
+    def evalPowerTOST(dat):
+        p=np.zeros((dat.shape[0],2))*np.nan
+        for i in range(dat.shape[0]):
+            sel=~np.isnan(dat[i,:])
+            if sel.sum()>2:
+                p[i,0]=ttest_1samp(dat[i,sel],es/2,alternative='less')[1]
+                p[i,1]=ttest_1samp(dat[i,sel],-es/2,alternative='greater')[1]
+                if np.isnan(p[i,0]) or np.isnan(p[i,1]):
+                    print(dat[i,sel]);stop
+        return np.logical_and(p[:,0]<alpha,p[:,1]<alpha).mean()>(1-beta)
+        
     from scipy.stats import ttest_1samp
-    gz=np.load(fn)
-    n=-np.ones((ess.size,gz.shape[3],gz.shape[0],gz.shape[4],gz.shape[5]),dtype=np.int32)
-    for ax in range(n.shape[4]):
-        for m in range(n.shape[3]):
-            for h in range(n.shape[2]):
-                for k in range(n.shape[1]):
-                    for esi,es in enumerate(ess):
-                        un=200;ln=5
-                        if not evalPower(gz[h,:,:un,k,m,ax]): n[esi,k,h,m,ax]=201
-                        if evalPower(gz[h,:,:ln,k,m,ax]): n[esi,k,h,m,ax]=0
-                        while n[esi,k,h,m,ax]==-1:
-                            cn=(un+ln)//2
-                            if evalPower(gz[h,:,:cn,k,m,ax]):un=cn
-                            else:ln=cn
-                            if un == ln+1: n[esi,k,h,m,ax]=un
+    if test=='ttest':evalPower=evalPowerTtest
+    elif test=='TOST':evalPower=evalPowerTOST
+    #gz=np.load(DPATHX+fn+'.npy')#'data/gz{a}{e}{ax}{suf}'
+    n=-np.ones((25,36,6),dtype=np.int32)
+    print(fn) 
+    for esi in range(n.shape[0]):
+        gz=np.load(DPATHX+fn+f'{esi:02d}.npy')
+        for k in range(n.shape[1]):
+            for m in range(n.shape[2]):
+                if m==n.shape[2]-1:g=np.nanmean(gz[:,:,k,m:,ax],axis=2)
+                else: g=np.copy(gz[:,:,k,m,ax])
+                un=200;ln=5
+                if np.all(np.isnan(g[:,:ln])):
+                    n[esi,k,m]=-9
+                    continue
+                elif np.all(np.isnan(g[:,:un])):
+                    n[esi,k,m]=-8
+                    continue
+                if not evalPower(g[:,:un]): n[esi,k,m]=201
+                if evalPower(g[:,:ln]): n[esi,k,m]=0
+                while n[esi,k,m]==-1:
+                    cn=(un+ln)//2
+                    if evalPower(g[:,:cn]):un=cn
+                    else:ln=cn
+                    if un == ln+1: n[esi,k,m]=un
     return n
-def fakedataTTestPower(suf,ncpu=4,alpha=0.05,beta=.8):
-    if suf=='NMG': ess=np.linspace(.1,2.1,21)
-    else: ess=np.linspace(.5,1.5,21)
+def fakedataTTestPower(ax,fn,ncpu=4,alpha=0.05,beta=.2,test='ttest',ecthreshold=10):
     from multiprocessing import Pool
     pool=Pool(ncpu)
     res=[]
-    for e in range(2):
-        es=['tob','smi'][e] 
-        for a in range(3):
-            temp=pool.apply_async(fakedataTTestPowerWorker,[f'data/gz{[4,7,10][a]}m{suf}{es}.npy',ess,alpha,beta])
+    bs=[3,5,9]
+    aas=[0,4,7,10]
+    for b in bs:
+        for a in aas:
+            temp=pool.apply_async(fakedataTTestPowerWorker,[f'gcC{b}p{a}m{fn}',ax,alpha,beta,test])
             res.append(temp)
     pool.close()  
     from time import time,sleep
@@ -1472,39 +1509,210 @@ def fakedataTTestPower(suf,ncpu=4,alpha=0.05,beta=.8):
             done+=int(r.ready())
         sleep(1)
         if done==tot: break
-    gz=np.load(f'data/gz7m{suf}tob.npy')
-    n=-np.ones((ess.size,gz.shape[3],gz.shape[0],gz.shape[4],3,gz.shape[5],2),dtype=np.int32)
+    n=[]
     k=0
-    for e in range(2):
-        for a in range(3):
-            n[:,:,:,:,a,:,e]=res[k].get()
+    for b in range(len(bs)):
+        n.append([])
+        for a in range(len(aas)):
+            n[-1].append(res[k].get())
             k+=1
-    np.save(f'data/n{suf}',n)
+    np.save(DPATH+f'ssnfp{fn}{test}',n)
+    
+def label2index(lbl):
+    if lbl[-3:]=='CP9':lbl=lbl[:-1]
+    r='nbt'.index(lbl[0])
+    a='ALV'.index(lbl[1])
+    k=['3','K','CP+NP','CP'].index(lbl[2:])
+    I=np.reshape(np.arange(4*3*4),[4,3,4])
+    return I[a,r,k]
+def label2ls(lbl): 
+    if lbl[-2:]=='CP':return 'ok-'
+    #if lbl[-3:]=='CP9':return 'ok-'
+    r='nbt'.index(lbl[0])
+    a='ALV'.index(lbl[1])
+    g='K3'.index(lbl[2])
+    return ['^-','x--','v:'][r]+'rgbmyc'[a+g*3]
+
+def fakedataEracc(dim,e,lbls=None,):
+    def computeExr(dat):
+        if dat.ndim==4: return np.median(np.all(np.isnan(dat[:,:,:,0]),axis=2).mean(1))
+        else:return np.median(np.isnan(dat[:,:,0]).mean(1))
+    def computeAcc(dat,avg=False):
+        if dat.ndim==4: return np.median(np.nanmean(np.linalg.norm(dat,axis=3),axis=(1,2)))
+        else: return np.median(np.nanmean(np.linalg.norm(dat,axis=2),1))
+        
+    if lbls is None:     
+        lbls=['nLK','bLK','tLK','nAK','bAK','tAK','nVK','bVK','tVK','nL3','bL3',
+            'tL3','nA3','bA3','tA3','nV3','bV3','tV3','nLCP','nACP','nVCP']
+    res=np.zeros((25,3,4,3,len(lbls),2))*np.nan
+    suf=['Tob','Smi'][e]+['Hor','Ver'][dim]
+    for a in range(res.shape[2]):
+        for h in range(res.shape[3]): 
+            fn=f'{[3,5,9][h]}p{[0,4,7,10][a]}m'+suf
+            for esi in range(res.shape[0]):
+                d=[[],[],[],[]]
+                gz=np.load(DPATHX+f'gcC{fn}{esi:02d}.npy')
+                c=np.rollaxis(np.load(DPATHX+f'cl{fn}{esi:02d}.npy'),-1,0)
+                for lbli,lbl in enumerate(lbls):
+                    for b in range(2):
+                        compute=[computeExr,computeAcc][b]
+                        for k in range(2):  res[esi,k,a,h,lbli,b]=compute(gz[:,:,label2index(lbl),k,:]-c[:,:,(3*[3,5,9][h]+37)+k,0,:])
+                        res[esi,2,a,h,lbli,b]=compute(gz[:,:,label2index(lbl),5:15,:]-c[:,:,(3*[3,5,9][h]+37)+5:,0,:]) 
+            del gz
+    np.save(DPATH+'eracc'+suf,res)  
+    np.savetxt(DPATH+'eraccLbls',lbls,fmt='%s')  
+    
+####################################################################
+
+def plotPowerSel(lblNP,lblCP,e):    
+    gridspec = dict(wspace=0.05, width_ratios=[1, 1,0.09,1,1,0.09,1,1],hspace=.04)
+    fig, axs = plt.subplots(figsize=(16,12),dpi=300,nrows=4, ncols=8, gridspec_kw=gridspec)
+    ess=np.load(f'data/ess.npy')
+
+    for dim in range(2):
+        suf=['Tob','Smi'][e]+['Hor','Ver'][dim]
+        n=np.load(DPATH+f'ssnfp{suf}ttest.npy')
+        for a in range(n.shape[1]):
+            axs[a][2].set_visible(False)
+            axs[a][5].set_visible(False)
+            for p in range(3):
+                ax=axs[[3,0,1,2][a]][3*p+dim]
+                for h in range(n.shape[0]):
+                    d=np.float32(n[h,a,:,label2index(lblNP),[0,1,5][p]])
+                    ax.plot(ess,d,'k',alpha=[.2,.5,1][h])
+                    d=np.float32(n[h,a,:,label2index(lblCP[:-1]),[0,1,5][p]])
+                    if '359'[h]==lblCP[-1]:
+                        ax.plot(ess,d,'r--',alpha=1)
+                
+                if p==0 and dim==0:
+                    if a==0:ax.set_ylabel(f'mixed age')
+                    else: ax.set_ylabel(f'{[4,7,10][a-1]}-month-old')
+                elif dim==1: ax.set_yticklabels([])
+        
+                if p==1 and dim==0 and a==3:ax.legend(['NP3','NP5',lblCP[-3:],'NP9'])
+                ax.grid()
+                if p<2:ax.set_xlim([0.25,1.5]);
+                else: ax.set_xlim([0.1,0.7]);
+                #plt.xlim([ess[0],ess[-1]])
+                ax.set_ylim([0,200])
+                h=['B1','B2','AVG'][p];tmp=['horizont','vertic'][dim]
+                if a==1: ax.set_title(['Tobii','SMI'][e]+f', {tmp}al,'+' $H_\\mathrm{'+h+'}$')
+                if a!=0: ax.set_xticklabels([])
+    plt.savefig(FIGPATH+f'powerSel'+['TOB','SMI'][e]+'.png',dpi=400, bbox_inches='tight')
+    
+def plotPowerAll(lblCP,e):    
+    gridspec = dict(wspace=0.05, width_ratios=[1, 1,1,0.09,1,1,1],hspace=.04)
+    ess=np.load(f'data/ess.npy')    
+    for p in range(3):
+        for pref in 'tbna':
+            fig, axs = plt.subplots(figsize=(16,12),dpi=300,nrows=4, ncols=7, gridspec_kw=gridspec)
+            for dim in range(2):
+                suf=['Tob','Smi'][e]+['Hor','Ver'][dim]
+                n=np.load(DPATH+f'ssnfp{suf}ttest.npy')
+                for a in range(n.shape[1]):
+                    axs[a][3].set_visible(False)
+                    
+                    for h in range(n.shape[0]):
+                        ax=axs[[3,0,1,2][a]][4*dim+h]
+                        if pref!='a':
+                            lbls=['VK','AK','LK','V3','A3','L3']
+                            lbls=list(map(lambda x: pref+x,lbls))
+                        else:lbls=['tL3','bA3','nL3',lblCP]
+                        for lbl in lbls:
+                            d=np.float32(n[h,a,:,label2index(lbl),[0,1,5][p]])
+                            ax.plot(ess,d,label2ls(lbl))
+                
+                        if h==0 and dim==0:
+                            if a==0:ax.set_ylabel(f'mixed age')
+                            else: ax.set_ylabel(f'{[4,7,10][a-1]}-month-old')
+                        elif dim==1: ax.set_yticklabels([])
+            
+                        if h==0 and dim==0 and a==1:ax.legend(lbls)
+                        ax.grid()
+                        ax.set_xlim([0,1.5]);
+                        #ax.set_xlim([0.1,0.7]);
+                        #plt.xlim([ess[0],ess[-1]])
+                        ax.set_ylim([0,200])
+                        tmp=['horizont','vertic'][dim]
+                        if a==1: ax.set_title(['3','5','9'][h]+f' cal. loc., {tmp}al')
+                        if a!=0: ax.set_xticklabels([])
+            plt.savefig(FIGPATH+f'e'+['TOB','SMI'][e]+f'h{p+1}{pref}.png',dpi=400, bbox_inches='tight')
+  
+def plotEracc(dim):
+    gridspec = dict(wspace=0.05, width_ratios=[1, 1,1,0.11,1,1,1],hspace=.04)
+    fig, axs = plt.subplots(figsize=(12,9),dpi=200,nrows=4, ncols=7, gridspec_kw=gridspec)
+    esi=10
+    lbls=np.loadtxt(DPATH+'eraccLbls',dtype=np.str_).tolist()#,fmt='%s')
+    resTob=np.load(DPATH+'eraccTob'+['Hor','Ver'][dim]+'.npy')
+    resSmi=np.load(DPATH+'eraccSmi'+['Hor','Ver'][dim]+'.npy')
+    for b in range(2):
+        for a in range(resTob.shape[2]):
+            axs[a][3].set_visible(False)
+            for h in range(resTob.shape[3]):
+                #plt.subplot(3,6,a*6+h+1+b*3)
+                ax=axs[[3,0,1,2][a]][h+b*4]
+                for k in range(resTob.shape[1]):
+                    ax.plot(resTob[esi,k,a,h,:-2,b],np.arange(len(lbls)-2),'x-'+'rgb'[k])
+                    if k==0: ax.plot(resSmi[esi,k,a,h,:-2,b],np.arange(len(lbls)-2),'x-'+'k'[k])
+                if a==1: ax.set_title(['Exclusion Rate','Accuracy'][b]+f'\n{[3,5,9][h]} Calibration Locations')
+                if h==0: 
+                    if b==0:
+                        if a>0: ax.set_ylabel(f'{[0,4,7,10][a]} months')
+                        elif a==0: ax.set_ylabel(f'mixed age')
+                    ax.set_yticklabels(lbls[:-3]+['CP']);
+                else:ax.set_yticklabels([]);
+                ax.set_yticks(range(len(lbls[:-2])));
+                if h+b*4==6:
+                    ax.yaxis.tick_right()
+                    ax.yaxis.set_ticks_position('both')
+                    ax.set_yticklabels(lbls[:-3]+['CP']);
+                ax.grid(True)
+                if b:
+                    ax.set_xticks(np.linspace(.5,3.5,7));
+                    ax.set_xlim([1.2,3.2])
+                else: ax.set_xlim([-.1,1.1])
+                if not a==0: ax.set_xticklabels([])
+                if a==1 and h==2 and b==0: ax.legend(['Tobii,  $H_\\mathrm{B1}$','SMI, $H_\\mathrm{B1}$','Tobii, $H_\\mathrm{B2}$','Tobii, $H_\\mathrm{AVG}$'],loc='lower left',fontsize=7)
+                if a==3 and h==1:
+                    print(resTob[esi,2,a,h,lbls.index('bAK'),b]) 
+                    print(resSmi[esi,2,a,h,lbls.index('bAK'),b]) 
+    plt.savefig(FIGPATH+f'eracc'+['Hor','Ver'][dim]+'.png',dpi=300, bbox_inches='tight')
+
+
 
 if __name__=='__main__':
-    
-    tp='MGsp10'#'NMG'
-    for e in [2,1]:
-        for a in [4,7,10]:
-            for b in [3,5,9]:
-                generateFakeDataHT(age=a,Ms=b*[0]+[1,2,3,4,5,6]+[0,1,2,3,4]+b*[1]+b*[2],
-                    P=list(range(b+6))+list(range(5))+b*[b]+b*[b+1], 
-                    Cs=(np.mod(np.arange(b),9)+1).tolist()+11*[1]+2*(np.mod(np.arange(b),9)+1).tolist(),
-                    N=200,fn=f'LfkPref{b}{e}', pOT=[-1]*b+11*[[-1,1][tp=='NMG']]+[-1]*b*2,Es=7*[e],K=10)#,Nd=6*[45])   
-            fakedataCalibration(e,fn=f'{a}m{tp}')   
-    fakedataTTestPower(tp);stop
-    generateFakeDataHT(age=7,Ms=9*[0]+5*[1]+5*[2]+9*[3]+5*[4]+5*[5],P=np.arange(38), Cs=np.array(list(range(9))+2*list(range(5))+list(range(9))+2*list(range(5)))+1, Es=[1,1,1,2,2,2], Nd=[55,45,65,55,45,65],N=-1,fn='empExp',savefit=True);stop
-    
-
     # loading and preprocessing
     fns=checkFiles()             
     D=loadCalibrationData(fns)
     with open(DPATH+'D.out','wb') as f: pickle.dump(D,f)
     with open(DPATH+'D.out','rb') as f: D=pickle.load(f)
     dataPreprocessing(D,f'dsFixTh1_0dva2',thacc=1,dva=2);
-    #dataPreprocessing(D,f'dsThaccInf');
-    computeVarAll('ThaccInfdva0',transform=2,predictors=1,quick=False,addSMI=1);
-    # replicate experiment
+    #fit model of data-generating process
+    fitMDGP('ThaccInfdva0',transform=2,predictors=1,ssmm=2,addSMI=1);
+    # generate fake data and compute power and accuracy
+    ttn=10
+    ess=np.linspace(0,1.5,26)[1:]
+    np.save(DPATH+'ess',ess)
+    for e in [0,1]:#two eyetrackers
+        for ax in [0,1]: # horizontal and vertical axis
+            fna=['Tob','Smi'][e]+['Hor','Ver'][ax]
+            for b in [3,5,9]:# nr of locations
+                for a in [0,4,7,10]:# age, 0 = mixed age
+                    for i in range(ess.size): 
+                        coord=[0,0]
+                        coord[ax]=ess[i]  
+                        generateFakeDataHT(Ms=b*[0]+b*[1]+b*[2]+ [1,2,3,4,5,6,7]+ttn*[1]+ttn*[2]+ttn*[3]+[0,1,2,3,4]+ttn*[0],P=list(range(b))+b*[b]+b*[b+1]+list(range(b,b+7))+list(range(b,b+10))+list(range(b+1,b+11))+list(range(b+2,b+12))+list(range(5))+list(range(10)), Cs=3*(np.arange(b)+1).tolist()+(7+30+5+10)*[coord],N=200,fn=f'{b}p{a}m{fna}{i:02d}',Es=8*[e+1],age=a,K=1000)
+                    fakedataCalibration(f'p{a}m{fna}',b,ess.size,ncpu=4)
+                    
+            fakedataTTestPower(ax,fna,ncpu=3)#,test='TOST');stop
+            fakedataEracc(ax,e)
+    # generate figures
+    for i in range(2):
+        plotPowerSel('nL3','nLCP5',i)
+        plotEracc(i)
+        plotPowerAll('nLCP',i)
+
+    #supplemental analysis, replicate experiment with infants?
     Xqmt=np.zeros((6,9));Xqmt[1,[1,2]]=1;Xqmt[4,[1,2]]=1
     generateFakeDataHT(age=7,Ms=range(6),P=[[0,9],[9,14],[14,19],[19,28],[28,33],[33,38]],
         Es=[1,1,1,2,2,2],Nd=[55,45,65,55,45,65],Xqmt=Xqmt,N=-1,fn='empExp')

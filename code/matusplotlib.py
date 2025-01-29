@@ -392,17 +392,20 @@ def printRhat(w):
     rhat=np.array(rhat)[np.newaxis,:]
     return i.size>0,nms,rhat,ess
 
-def saveStanFit(fit,dat,fname,model=None): 
-    converged,nms,rhat,ess=printRhat(fit)
-    w={'nms++':nms,'rhat++':rhat,'ess++':ess}
+def saveStanFit(fit,dat,fname,model=None,computeRhat=True): 
+    if computeRhat:
+        converged,nms,rhat,ess=printRhat(fit)
+        w={'nms++':nms,'rhat++':rhat,'ess++':ess}
+    else: w={}
     for k in fit.keys():w[k]=np.rollaxis(fit[k],-1,0)
+    #assert(not np.all(np.isnan(w['y'][0,:,:,:])))
     for k in dat.keys():w[k+'+']=dat[k]
     #w['model']=fit.get_stancode()
     if not model==None:w['model_code++']=model
     w['num_chains++']=fit.num_chains
     with open(fname+'.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
     return w 
-def loadStanFit(fname,excludeChains=[]):
+def loadStanFit(fname,excludeChains=[],computeRhat=True):
     with open(fname+'.wfit','rb') as f: w=pickle.load(f)
     if len(excludeChains)==0: return w  
     wnew={}
@@ -412,12 +415,12 @@ def loadStanFit(fname,excludeChains=[]):
     for k in w.keys():
         if k[-1]=='+': continue 
         wnew[k]=np.reshape(w[k],[w['num_chains++'],w[k].shape[0]//w['num_chains++']]+ list(w[k].shape[1:]),order='F')[chinds,]
-    converged,nms,rhat,ess=printRhat(wnew)
+    if computeRhat: converged,nms,rhat,ess=printRhat(wnew)
     for k in wnew.keys():
         wnew[k]=np.reshape(wnew[k],[wnew[k].shape[0]*wnew[k].shape[1]]+ list(wnew[k].shape[2:]),order='F')
     for k in w.keys():
         if k[-1]=='+':wnew[k]=w[k]  
-    wnew['nms++']=nms;wnew['rhat++']=rhat;wnew['ess++']=ess
+    if computeRhat: wnew['nms++']=nms;wnew['rhat++']=rhat;wnew['ess++']=ess
     #with open(fname+'.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
     return wnew
     
