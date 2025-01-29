@@ -1,7 +1,7 @@
 import os,pickle,stan
 import numpy as np
 import pylab as plt
-from matusplotlib import saveStanFit,loadStanFit
+from matusplotlib import saveStanFit,loadStanFit,ndarray2latextable
 from scipy.stats import scoreatpercentile as sap
 MD=70 #monitor distance used to compute deg visual angle in the output files
 #position of calibration points
@@ -9,9 +9,9 @@ CTRUE=np.array([[0,0],[-11,11],[11,11],[11,-11],[-11,-11],[11,0],[-11,0],[0,11],
 #CTRUE=CTRUEDEG/180*np.pi*MD # true calibartion locations in cm
 SEED=9 # the seed of random number generator was fixed to make the analyses replicable
 TC,TS,F,LX,LY,RX,RY,BX,BY,LD=range(10); RD=12;BD=15
-DPI=500 #figure resolution
+DPI=300 #figure resolution
 DPATH='data'+os.path.sep  
-DPATHX='/run/media/matus/backup/research/work/K018/code/dataL/'#'/run/media/matus/ext/data/'
+DPATHX='/run/media/matus/backup/research/work/K018/code/dataL/'
 FIGPATH='../publication/fig/'
 ##########################################################################
 # DATA LOADING ROUTINES
@@ -296,7 +296,6 @@ def loadCalibrationData(fns):
 from scipy.interpolate import interp1d
 from scipy.stats import norm
 
-
 def computeState(isX,t,minGapDur=0,minDur=0,maxDur=np.inf):
     ''' generic function that determines event start and end
         isX - 1d array, time series with one element for each
@@ -532,7 +531,8 @@ def dpworker(G,thacc,thvel,minDur,dva):
     return R,included 
 
    
-def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.06,dva=0,verbose=False,ncpu=8):  
+def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.06,
+    dva=0,verbose=False,ncpu=8):  
     ''' the processing code is in dpworker(), this is just a wrapper
         for parallel application of dpworker
     '''              
@@ -569,336 +569,6 @@ def dataPreprocessing(D,fn,thacc=0.5,thvel=10,minDur=0.06,dva=0,verbose=False,nc
     np.save(DPATH+fn,ds)
 ##########################################################################
 
-def tableSample(fn):
-    ''' prints code for latex table to console
-        table includes sample exclusion description '''
-    I=np.load(DPATH+fn+'.npy')
-    left=[]
-    for a in [4,7,10]:
-        for e in ['Tob','Smi']:
-            for d in [45,55,65]:
-                if e=='Tob' and d==45: aa=a
-                #elif e=='Tob' and d==55: aa='$%d$'%[86,65,53][int((a-4)/3)]
-                else: aa=''
-                if d==45: ee=e
-                else: ee=''
-                left.append([aa,ee,d])
-    left=list(np.array(left,dtype=object).T)
-    res=[]
-    for g in range(2):
-        for e in range(3):
-            for i in [0,2,4]:
-                if i==0 and e==0 and g==1: 
-                    for l in left: 
-                        res.append(l)
-                temp=[]
-                for coh in range(3):
-                    for dev in range(2):
-                        for dist in [1,0,2]:
-                            if g==1: temp.append((I[dev,coh,dist,e,i]/I[dev,coh,dist,e,i+1])/[9,5,5][dist]*100)
-                            elif g==0: temp.append(I[dev,coh,dist,e,i+1]/I[dev,coh,dist,e,-1]*100)
-                res.append(np.array(temp,dtype=object))
-    res=np.array(res,dtype=object).T
-    top=[]
-    for p in range(2):
-        for e in ['L','R','B']:
-            if p==1 and e=='L': top.extend(['$m$','ET','$d$'])    
-            for i in range(3): top.append(e+str(i+1))
-    res= np.array([top]+list(res),dtype=object)
-    ndarray2latextable(res,decim=0,hline=[0,3,6,9,12,15],
-        nl=0,vline=[2,5,8,9,10,11,14,17]) 
-def figureSample(fn,dev=0):
-    I=np.load(DPATH+fn+'.npy')
-    
-    CLRS=['0.3','0.5','0.7']#['k','gray','w']
-    xtcs=[]
-    figure(size=3,aspect=0.6,dpi=DPI)
-    for tp in range(2):
-        for coh in range(3):
-            ax=subplot(2,3,3*tp+coh+1)
-            ax.set_axisbelow(True)
-            plt.grid(True,axis='y')
-            for dist in range(3):
-                plt.text(dist*4+1.7, 5,['55','45','65'][dist],horizontalalignment='center',size=10)
-                for e in range(3):
-                    xtcs.append(dist*4+e+0.5)
-                    for i in range(3):
-                        if tp==0: y=I[dev,coh,dist,e,2*i+1]
-                        else: y=I[dev,coh,dist,e,2*i]/I[dev,coh,dist,e,2*i+1]/[9,5,5][dist]*100
-                        plt.bar(dist*4+e,y,width=0.9-i*0.2,color=CLRS[i],align='edge')
-            ax.set_xticks(xtcs)
-            if tp==0:plt.ylim([0,90])
-            else: plt.ylim([0,100])
-            if coh: ax.set_yticklabels([])
-            else: plt.ylabel(['Number of included\nparticipants','Percentage of included\ncalibration locations'][tp])
-            if tp==0:plt.title(['4 months','7 months','10 months'][coh])
-            ax.set_xticklabels(['L','R','B']*int(len(xtcs)/3))
-            
-    #plt.show()
-    plt.savefig('../publication/figs/%s%d.png'%(fn,dev),bbox_inches='tight',dpi=DPI)       
-                
-def sampleDescr(dva):
-    ds=np.load(DPATH+f'dsFixTh1_0dva{dva}.npy')
-    R=np.zeros((3,4))*np.nan
-    for dev in range(2):
-        m=0
-        for eye in range(2):
-            maxcp=5#[9,5][int(m>0)]
-            y=ds[dev,:,m,eye,:maxcp,:2]
-            c=ds[dev,:,m,eye,:maxcp,2:4]
-            sel=~(np.isnan(y[:,:,0]).sum(1)>2)
-            r=eucldunits(c[sel,:],y[sel,:,:],ds[dev,sel,m,eye,:maxcp,4:7],dva)
-            R[m,dev*2+eye]=np.nanmean(r)
-    ndarray2latextable(R,decim=1,hline=[1],nl=1);
-            
- 
-def trainLC(suf,m,dev,eye=2,docompile=True,short=False):
-    ''' train linear corection, estimate the offset and slope pars
-        suf - suffix of the target ds, the file provides the data
-        m - which session to use for training, i-th session is m=i-1
-        dev - device: 0=Tobii, 1=SMI
-        eye - 0= left, 1=right, 2=binocular average
-        docompile - if true compiles the stan model
-        short - if true only ,,2s'' version is evaluated
-     '''
-    models=[]
-    data='''data {
-        int<lower=0> N;
-        vector[2] y[N,5];
-        vector[2] c[N,5];
-        real age[N];
-        real dist[N,5];'''
-    for k in range(4):
-        for i in range(4):
-            r=['','corr_matrix[2] ry;'][int(i/2)]
-            yvar=['diag_matrix(sy)','quad_form_diag(ry,sy)'][int(i/2)]
-            odim=[3,4][i%2]
-            os=['','[N]'][int(k>0)]
-            pars=f'''
-            }}parameters{{
-                vector[{odim}] o{os};
-                vector<lower=0,upper=100>[2] sy;
-                {r}
-                '''
-            temp=f'''vector[{odim}] mo;
-            vector<lower=0,upper=100>[{odim}] so;
-            corr_matrix[{odim}] ro;'''
-            temp2=f'''
-            vector<lower=-100,upper=100>[{odim}] aay;
-            vector<lower=-100,upper=100>[2] ady;
-            '''
-            if k==2: pars+=temp
-            elif k==3: pars+= temp+temp2
-            os=['','[n]'][int(k>0)]
-            yslope=[f'o{os}[3]', f'tail(o{os},2).'][i%2]
-            pag=['','+aay*age[n]'][int(k==3)]
-            pred=['','+ady*dist[n,p]'][int(k==3)]
-            temp=['',f'o[n]~multi_normal(mo{pag},quad_form_diag(ro,so));'][int(k>1)]
-            so=['','so~cauchy(0,20);'][int(k>1)]
-            model=f'''
-        }} model {{
-            sy~cauchy(0,20);
-            {so}
-            for (n in 1:N){{ {temp}
-            for (p in 1:5){{
-                if (! is_nan(y[n,p][1]))
-                    c[n,p]~multi_normal(head(o{os},2)+{yslope}*y[n,p]{pred},{yvar});       
-        }}}}}}'''
-            models.append(data+pars+model)
-    sms=[]
-    print('Compiling models')
-    assert(len(models)==16)
-    iss=range(len(models))
-    if docompile:
-        for i in iss:
-            sms.append(pystan.StanModel(model_code=models[i]))
-            with open(DPATH+f'sm{i}.pkl', 'wb') as f: pickle.dump(sms[-1], f)
-    sms=[]
-    for i in range(len(models)):
-        with open(DPATH+f'sm{i}.pkl', 'rb') as f: temp=pickle.load(f)
-        sms.append(temp)
-    ds=np.load(DPATH+f'ds{suf}.npy')
-    print('Compilation Finished, Fitting models')
-    y=ds[dev,:,m,eye,:5,:2]
-    c=ds[dev,:,m,eye,:5,2:4]
-    assert(np.all(np.isnan(y[:,:,0]).sum(1)<6))
-    sel=~(np.isnan(y[:,:,0]).sum(1)>2)
-    age=np.load(DPATH+'age.npy')[sel]
-    age= age/30-7
-    dist=ds[dev,:,m,eye,:5,6]
-    dist=(dist[sel,:]-57.5)/10
-    #c=ds[dev,:,m,eye,:5,2:4]
-    dat={'y':y[sel,:,:],'N':sel.sum(),'c':c[sel,:],'age':age,'dist':dist}
-    if short: doi=[1,5,9]
-    else: doi=range(12) 
-    for i in doi:
-        print(dev,eye,m,i)
-        fit = sms[i].sampling(data=dat,iter=10000,
-            chains=6,thin=10,warmup=5000,n_jobs=6,seed=SEED)
-        saveStanFit(fit,DPATH+f'd{dev}e{eye}m{m}i{i}{suf}')   
-                  
-def validateLC(fn,mcal=1,mval=0,dev=0,novelLocations=False,dva=0,units='deg',
-    plot=0,pref='a',legend=False):
-    ''' prints code for latex table to console
-        table shows accuracy estimates
-        fn, m and dev determine the input file - see output of computePA
-        dva and units - determine the unit type
-        plot - 1 plot 2s only, 2 plots all versions
-        pref - prefix for the figure output file
-        legend and ylim - figure parameters
-    '''   
-    qntls=[50,2.5,97.5,25,75]
-    left=[]
-    for i in range(4): # eye
-        ii=['L','R','DALR','PALR'][i]
-        ee=['Tobii','Smi'][dev]
-        left.append([ee,ii])
-
-    left=list(np.array(left).T)
-    top=['device','eye']
-    for i in ['p','u','h','a']:
-        for j in ['1s','2s','1sc','2sc']:
-            top.append(i+j)
-    
-    for i in range(len(top)-2):
-        left.append(['']*len(left[0]))
-    res=np.array([top]+list(np.array(left).T),dtype='U256')
-    resout=np.array(np.nan*np.zeros((list(res.shape)+[7])),dtype=object)
-    resout[:,:,0]=res
-    ds=np.load(DPATH+f'ds{fn}dva{dva}.npy')
-    AX=np.newaxis
-    lracc=np.zeros((2,203))*np.nan
-    for i in range(16):
-        lrchat=np.zeros((2,203,9,7))*np.nan
-        for eye in range(4):
-            if eye<3:
-                #with open(DPATH+f'sm{i}.pkl','rb') as f: sm=pickle.load(f)
-                try:w=loadStanFit(DPATH+f'd{dev}e{eye}m{mcal}i{i}{fn}dva{dva}')
-                except: continue
-                inds=(w['rhat'][0,:-1]>1.1).nonzero()[0]
-                if len(inds)>0:
-                    print(dev,eye,top[2+i],'FAILED',w['nms'][inds],w['rhat'][0,:-1][inds])
-                    if eye==0: lchat=np.nan
-                    elif eye==1: rchat=np.nan
-                    res[1+eye,2+i]='-';continue
-                else: print(dev,eye,i,top[2+i],'CONVERGED') 
-                #print(f'd{dev}e{eye}m{m}i{i}',len(inds))
-                o=np.mean(w['o'],axis=0)
-                if o.ndim==1: o=o[AX,:]
-                slope= o[:,AX,2:] 
-                if slope.ndim==2: slope=slope[:,:,AX]
-                #sel=~np.all(np.isnan(ds[dev,:,m+1,eye,:5,0]),axis=1)
-                sel=~(np.isnan(ds[dev,:,mcal,eye,:5,0]).sum(1)>2)
-                age=np.load(DPATH+'age.npy')[sel]
-                age= age/30-7
-                y=ds[dev,sel,mval,eye,:,:2]
-                ctrue=ds[dev,sel,mval,eye,:,2:4]
-                dist=ds[dev,:,mval,eye,:,6]
-                dist=(dist[sel,:]-57.5)/10
-                chat= o[:,AX,:2]+slope*y
-                if 'ady' in w.keys(): 
-                    ady=np.mean(w['ady'],0)
-                    chat+= (ady[AX,AX,:]* dist[:,:,AX])
-                if eye<2: 
-                    lrchat[eye,sel,:,:2]=chat
-                    lrchat[eye,sel,:,2:4]=ctrue
-                    lrchat[eye,sel,:,4:]=ds[dev,sel,mval,eye,:,4:]
-            elif eye==3: 
-                chat=np.nanmean(lrchat[:,:,:,:2],axis=0)
-                sel=~np.all(np.isnan(chat[:,:,0]),axis=1)
-                chat=chat[sel,:,:]
-                ctrue=np.nanmean(lrchat[:,sel,:,2:4],axis=0)
-            if np.all(np.isnan(chat)):
-                res[1+eye,2+i]='-';continue
-            if eye<3: dsd=ds[dev,sel,mval,eye,:,4:7]
-            elif eye==3: dsd=np.nanmean(lrchat[:,sel,:,4:],axis=0)
-            temp=eucldunits(ctrue,chat,dsd,dva)
-            if novelLocations: temp=np.nanmean(temp[:,5:],axis=1)
-            else: temp=np.nanmean(temp[:,:5],axis=1)
-            if eye<2: lracc[eye,sel]=temp
-            sel=np.isnan(temp) 
-            mm=np.nanmean(temp);se=np.sqrt(np.nanvar(temp)/(~np.isnan(temp)).sum())
-            res[1+eye,2+i]='\\textbf{%.2f} (%.2f,%.2f)'%(mm,mm-1.96*se,mm+1.96*se)
-            resout[1+eye,2+i,5]=mm; resout[1+eye,2+i,6]=se 
-            resout[1+eye,2+i,:5]=list(map(lambda x: sap(temp[~sel],x),qntls))
-        #np.save('lracc',lracc)
-        temp=lracc[1,:]-lracc[0,:]
-        sel=np.isnan(temp) 
-        mm=np.nanmean(temp);se=np.sqrt(np.nanvar(temp)/(~np.isnan(temp)).sum())
-        #print(top[2+i],'acc right eye - acc left eye: m= %.3f, 95p CI (%.3f,%.3f), r=%.3f'%(mm,mm-1.96*se,mm+1.96*se, np.corrcoef(lracc[1,~sel],lracc[0,~sel])[0,1]))      
-    sel=resout==''
-    resout[sel]=np.nan
-    if plot>0:
-        suf=['','N'][int(novelLocations)]
-        ffn=pref+['Tob','Smi'][dev]+f'{mcal}{mval}Dva{dva}{units}{suf}'
-        plt.close('all')
-        if plot==2: figure(size=2,aspect=0.8,dpi=DPI)
-        else: figure(size=4,aspect=0.5,dpi=DPI)
-        figureAccuracy(resout,short=plot==2,legend=legend,dev=dev)
-        plt.savefig('../publication/figs/%s.png'%ffn,bbox_inches='tight',dpi=DPI) 
-    else: 
-        ndarray2latextable(res.T,decim=0,hline=[1,5,9,13],nl=1); 
-        return resout
-
-def figureAcc():
-    plt.close('all')
-    figure(size=3,aspect=1.1,dpi=DPI)
-    mps=['complete pooling','no pooling','hierarchical', 'hier. with predictors']
-    for i in range(2):
-        subplot(2,1,1+i)
-        res=validateLC('FixTh1_0',mcal=0,mval=2,dva=0,dev=i,plot=0)
-        
-        for k in range(3):
-            plt.plot([k*2.8+2.6,k*2.8+2.6],[0,7],'k',lw=.5)
-            plt.text(k*2.8+1.2,0.15,mps[k],ha='center',size=7)
-        figureAccuracy(res,dev=i,ylim=[0,[5,6][i]])
-        subplotAnnotate()
-        plt.xlabel(None)
-    plt.xlabel('LC version')   
-    plt.savefig('../publication/figs/acc.png',bbox_inches='tight',dpi=DPI) 
-
-    
-
-def figureAccuracy(res,short=False,legend=False,dev=0,ylim=[0,5]):
-    ''' plots accuracy of estimates'''
-    if short: res=res[:,[0,1,3,7,11,15],:]
-    clrs=['g','c','b','y']
-    xs= np.arange(res.shape[1]-2)*0.7
-    lbls=['prediction avg.','data avg.','right eye','left eye']
-    k=0
-    #for k in range(2):
-    #ax=plt.subplot(1,2,1+k)
-    handles=[]
-    for col in range(1,5)[::-1]:
-        ofs=(col-1.5)/1.5*0.2
-        x=np.array([xs+ofs,xs+ofs])
-        out=plt.plot(x,res[col+k*4,2:,1:3].T,color=clrs[col-1],alpha=0.7)
-        plt.plot(x,res[col+k*4,2:,3:5].T,color=clrs[col-1],lw=3,solid_capstyle='round')
-        plt.plot(xs+ofs,res[col+k*4,2:,0],mfc=clrs[col-1],
-            mec=clrs[col-1],marker='d',lw=0) 
-        #if short:
-        plt.plot(xs+ofs-0.15,res[col+k*4,2:,5],mfc=clrs[col-1],
-            mec=clrs[col-1],marker='_',lw=0) 
-        mm=se=res[col+k*4,2:,5];se=res[col+k*4,2:,6]
-        plt.plot(x-0.15,[mm-1.96*se,mm+1.96*se],color=clrs[col-1],alpha=0.7)     
-        handles.append(out[0])
-        plt.plot()
-    ax=plt.gca()
-    ax.set_xticks(xs+0.1);
-    mps=['complete pooling','no pooling','hierarchical', 'hier. with predictors'][:3]
-    if not short: 
-        ax.set_xticklabels(['1s','2s','1sc','2sc']*4)
-        plt.xlabel(([13,11][int(short)]*'   ').join(mps))
-    else: ax.set_xticklabels(mps);
-    plt.yticks(np.arange(0,7,0.5))
-    plt.ylim(ylim)
-    plt.xlim([-0.5,xs[-1]-0.7*3.5])
-    plt.grid(True,axis='y')
-    #if not k: plt.xlabel('LC model')
-    plt.ylabel(['Tobii X3 120','SMI Redn'][dev]+'\nAccuracy in degrees')
-    if legend:plt.legend(handles[::-1],lbls[::-1],loc=1)
-    #plt.title(['Tobii X3 120','SMI Redn'][k])  
-
 def figurePreproc():
     '''plot illustration of the preprocessing steps'''
     figure(size=3,aspect=0.4,dpi=DPI)
@@ -929,7 +599,7 @@ def figurePreproc():
         h+=1
     plt.savefig('../publication/figs/preproc.png',bbox_inches='tight',dpi=DPI)
 
-
+###########################################################
     
 
 def fitMDGP(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
@@ -1114,139 +784,6 @@ def fitMDGP(fn,addSMI=False,transform=0,predictors=0,ssmm=1,eye=2):
     fit = sm.sample(num_chains=7,num_thin=int(max(ssmm*1,1)),
         num_samples=int(ssmm*500),num_warmup=int(ssmm*500),init=[tmp]*7)
     saveStanFit(fit,dat,DPATH+f'sm2L13{fn}{transform}{eye}{predictors}{addSMI}',model=model)
-    
-def _avgDist(h,v,N=10000000,lim=None):
-    ''' return average expected distance E[sqrt(x^2+y^2)]
-        with [x,y]~normal([0,0],S) where S is the covariance matrix 
-            S=diag([h^2,v^2])
-        h, v - standard deviations of the normal distribution that generates x and y
-        N - number of samples, the default is sufficient for two-decimals precision
-        lim - int parameter for adjusting the required memory capacity 0<lim<N
-    '''
-    na=np.newaxis
-    if lim is None: lim=N
-    if np.isscalar(h):h=np.array([h])
-    if np.isscalar(v):v=np.array([v])
-    M=N/lim
-    res=0
-    for m in range(int(M)):
-        a=np.square(np.random.randn(lim)[:,na,na]*h[na,:])
-        b=np.square(np.random.randn(lim)[:,na,na]*v[na,:])
-        res+=np.sqrt(a+b).mean(0)/M
-    return np.squeeze(res)
-def plotVarAll(trns,prediction,f=None,w=None,saveFig=True):
-    ''' plots accuracy at each level for an 7M infant seat 60 cm from eye tracker
-        w - stanfit data which are plotted, if None prediction 
-            and trns determine the input
-        prediction - include accuracy predictors with the model
-        trns - 0: accuracy predictors are linear w.r.t. standard deviation
-            - 1: accuracy predictors are linear w.r.t. variance
-            - 2: accuracy predictors are log-linear w.r.t. standard deviation
-        f- function necessary to transform the Stan parameters to accuracy
-        saveFig - if true the figure is saved to hard drive
-    '''
-    if f is None: f=[lambda x:x,np.sqrt,lambda x: np.exp(x)-1][trns]
-    if w is None: 
-        with open(f'data/smHADER{trns}2{prediction}dva0.wfit','rb') as f: w=pickle.load(f)
-    #assert(np.max(w['rhat'][0,:-1])<1.1)# assume convergence when R^hat<1.1
-    na=np.newaxis
-    wds=['sy','so','sm']
-    for wd in wds:
-        #print(wd)
-        tmp=_avgDist(f(w[wd][...,0]),f(w[wd][...,1]),lim=50000)
-        w[wd]= np.concatenate((f(w[wd]),tmp[...,na]),axis=2)
-    #plt.figure(figsize=(10,5))
-    figure(size=3,aspect=0.5)
-    for dev in range(2):
-        #axx=plt.subplot(1,2,dev+1)
-        axx=subplot(1,2,dev+1)
-        sm=[0,0]
-        for ax in range(3):
-            #print(['hor','ver','both'][ax])
-            for i in range(len(wds)): 
-                if ax==2: 
-                    if wds[i][1]!='m': sm[0]+=np.square(w[wds[i]][:,dev,ax])
-                    sm[1]+=np.square(w[wds[i]][:,dev,ax])
-                errorbar(w[wds[i]][:,dev,ax],x=[3*i+ax],clr='gcy'[ax])
-
-            #plt.plot([3*ax+i+.5,3*ax+i+.5],[0,10],'k',lw=0.5)
-        et=['Tobii X3 120','SMI REDn'][dev]
-        print(et+' NP acc.: ',np.round(errorbar(np.sqrt(sm[0]),x=[999])[0],2))
-        print(et+' CP acc.: ',np.round(errorbar(np.sqrt(sm[1]),x=[999])[0],2))
-        print(et+' PE: ',np.round(errorbar(sm[0]/sm[1],x=[999])[0],2))
-        plt.grid(True,axis='y')
-        plt.xlim([-.5,3*ax+i+0.5])
-        axx.set_xticks(range(3*ax+i+1))
-        axx.set_xticklabels(['H','V','C']*3)
-        plt.ylim([0,[2.5,2][prediction]])
-        subplotAnnotate()
-        if dev==0: plt.ylabel('Accuracy in degrees')
-        plt.title(et+'\nlocation   session   population')
-        if saveFig: plt.savefig(f'../publication/figs/var{trns}{prediction}.png',bbox_inches='tight',dpi=DPI)  
-        
-def plotSlopeAll(trns):
-    ''' plots the preditor values and prints hypothetic manipulations
-        trns - determines which Stan model/file is plotted
-            - 0: accuracy predictors are linear w.r.t. standard deviation
-            - 1: accuracy predictors are linear w.r.t. variance
-            - 2: accuracy predictors are log-linear w.r.t. standard deviation
-    '''
-    w=loadStanFit(f'data/smHADER{trns}21dva0')
-    wds=['oas','mas','nas','oms','mms','ods']
-    figure(size=3,aspect=0.5)
-
-    k=0
-    devlbl=['Tobii','SMI'];levlbl={'o':'L','m':'S','n':'P'}
-    vlbl={'a':'Age','m':'Session','d':'Distance'}
-    for i in range(len(wds)): 
-        for dev in range(1+int(w[wds[i]].ndim==3)):
-            for ax in range(2):
-                if w[wds[i]].ndim==3: tmp=w[wds[i]][:,dev,ax]
-                else:tmp=w[wds[i]][:,ax]
-                out=errorbar(tmp,x=[k],clr='gcy'[ax]);k+=1
-                #if wds[i]=='ods' and ax==0 and dev==1: print(out)
-            ll=['',':'+devlbl[dev]][int(w[wds[i]].ndim==3)]
-            s=f'{vlbl[wds[i][1]]}\n{levlbl[wds[i][0]]}{ll}'
-            plt.text(k-1.5,0.41,s,ha='center',size=8)
-            if i==3 or i==5:plt.plot([2*(i+1)+1.5,2*(i+1)+1.5],[-1,1],'k',lw=0.5)
-    plt.grid(True,axis='y')
-    plt.xlim([-.5,k-.5])
-    plt.gca().set_xticks([])
-    #axx.set_xticklabels(['H','V']*len(wds))
-    plt.ylim([-.4,.4])
-    plt.ylabel('Accuracy in degrees')
-    plt.savefig(f'../publication/figs/slope{trns}.png',bbox_inches='tight',dpi=DPI) 
-    def perturb(ww,ax,wp,val,dev=0,w=None):
-        ''' compute and print total accuracy before and after reg coef wp
-            is added val times to variable wp
-            dev - eye-tracking device
-            ax - axis on which the addtion is performed 0 - hor, 1-ver, 2-both
-            w - stan parameter estimatesd
-        '''
-        devs=['TOB','SMI']
-        if w is None: w=loadStanFit(f'data/smHADER021dva0')
-        aa=errorbar(np.sqrt(np.array(list(map(lambda x: np.square(_avgDist(
-            np.median(w[x][:,dev,0]),np.median(w[x][:,dev,1]))),['sy','so']))).sum(0)))[0][0]
-        if ax==2:
-            if w[wp].ndim==2:w[ww][:,dev,:]+=val*w[wp]
-            else:w[ww][:,dev,:]+=val*w[wp][:,dev,:]
-        else: 
-            if w[wp].ndim==2:w[ww][:,dev,ax]+=val*w[wp][:,ax,na]
-            else: w[ww][:,dev,ax]+=val*w[wp][:,dev,ax]
-        bb=errorbar(np.sqrt(np.array(list(map(lambda x: np.square(_avgDist(
-            np.median(w[x][:,dev,0]),np.median(w[x][:,dev,1]))),['sy','so']))).sum(0)))[0][0]
-        print(f'{devs[dev]}: {ww} {aa:.3f} -> {wp} {bb:.3f}, {bb-aa:.3f}')
-        plt.close()
-        return w
-    perturb('so',2,'mas',3,dev=0)
-    perturb('so',2,'mas',-3,dev=1)
-    w=perturb('so',2,'mms',4,dev=0)
-    w=perturb('sy',2,'oms',4,dev=0,w=w)
-    
-    w=perturb('so',2,'mms',4,dev=1,w=w)
-    w=perturb('so',2,'oms',4,dev=1,w=w)
-    plotVarAll(0,1,w=w,saveFig=False)
-    perturb('sy',2,'ods',1,dev=1)
 
 def generateFakeDataHT(age,Ms,P,Cs=None,Es=None,Nd=None,
     N=-1,K=1000,fn='',savefit=False,numChains=1):
@@ -1566,7 +1103,7 @@ def fakedataEracc(dim,e,lbls=None,):
 
 def plotPowerSel(lblNP,lblCP,e):    
     gridspec = dict(wspace=0.05, width_ratios=[1, 1,0.09,1,1,0.09,1,1],hspace=.04)
-    fig, axs = plt.subplots(figsize=(16,12),dpi=300,nrows=4, ncols=8, gridspec_kw=gridspec)
+    fig, axs = plt.subplots(figsize=(16,12),dpi=DPI,nrows=4, ncols=8, gridspec_kw=gridspec)
     ess=np.load(f'data/ess.npy')
 
     for dim in range(2):
@@ -1598,14 +1135,14 @@ def plotPowerSel(lblNP,lblCP,e):
                 h=['B1','B2','AVG'][p];tmp=['horizont','vertic'][dim]
                 if a==1: ax.set_title(['Tobii','SMI'][e]+f', {tmp}al,'+' $H_\\mathrm{'+h+'}$')
                 if a!=0: ax.set_xticklabels([])
-    plt.savefig(FIGPATH+f'powerSel'+['TOB','SMI'][e]+'.png',dpi=400, bbox_inches='tight')
+    plt.savefig(FIGPATH+f'powerSel'+['TOB','SMI'][e]+'.png',dpi=DPI, bbox_inches='tight')
     
 def plotPowerAll(lblCP,e):    
     gridspec = dict(wspace=0.05, width_ratios=[1, 1,1,0.09,1,1,1],hspace=.04)
     ess=np.load(f'data/ess.npy')    
     for p in range(3):
         for pref in 'tbna':
-            fig, axs = plt.subplots(figsize=(16,12),dpi=300,nrows=4, ncols=7, gridspec_kw=gridspec)
+            fig, axs = plt.subplots(figsize=(16,12),dpi=DPI,nrows=4, ncols=7, gridspec_kw=gridspec)
             for dim in range(2):
                 suf=['Tob','Smi'][e]+['Hor','Ver'][dim]
                 n=np.load(DPATH+f'ssnfp{suf}ttest.npy')
@@ -1636,11 +1173,11 @@ def plotPowerAll(lblCP,e):
                         tmp=['horizont','vertic'][dim]
                         if a==1: ax.set_title(['3','5','9'][h]+f' cal. loc., {tmp}al')
                         if a!=0: ax.set_xticklabels([])
-            plt.savefig(FIGPATH+f'e'+['TOB','SMI'][e]+f'h{p+1}{pref}.png',dpi=400, bbox_inches='tight')
+            plt.savefig(FIGPATH+f'e'+['TOB','SMI'][e]+f'h{p+1}{pref}.png',dpi=DPI, bbox_inches='tight')
   
 def plotEracc(dim):
     gridspec = dict(wspace=0.05, width_ratios=[1, 1,1,0.11,1,1,1],hspace=.04)
-    fig, axs = plt.subplots(figsize=(12,9),dpi=200,nrows=4, ncols=7, gridspec_kw=gridspec)
+    fig, axs = plt.subplots(figsize=(12,9),dpi=DPI,nrows=4, ncols=7, gridspec_kw=gridspec)
     esi=10
     lbls=np.loadtxt(DPATH+'eraccLbls',dtype=np.str_).tolist()#,fmt='%s')
     resTob=np.load(DPATH+'eraccTob'+['Hor','Ver'][dim]+'.npy')
@@ -1676,11 +1213,11 @@ def plotEracc(dim):
                 if a==3 and h==1:
                     print(resTob[esi,2,a,h,lbls.index('bAK'),b]) 
                     print(resSmi[esi,2,a,h,lbls.index('bAK'),b]) 
-    plt.savefig(FIGPATH+f'eracc'+['Hor','Ver'][dim]+'.png',dpi=300, bbox_inches='tight')
-
+    plt.savefig(FIGPATH+f'eracc'+['Hor','Ver'][dim]+'.png',dpi=DPI, bbox_inches='tight')
 
 
 if __name__=='__main__':
+    sampleDescr(2);stop
     # loading and preprocessing
     fns=checkFiles()             
     D=loadCalibrationData(fns)
@@ -1710,10 +1247,12 @@ if __name__=='__main__':
     for i in range(2):
         plotPowerSel('nL3','nLCP5',i)
         plotEracc(i)
-        plotPowerAll('nLCP',i)
-
-    #supplemental analysis, replicate experiment with infants?
+        
+    # supplemental material
+    figurePreproc()#figure S1
+    sampleDescr(2)
+    # section 3 and figure S2
+    #replicate experiment with infants
     Xqmt=np.zeros((6,9));Xqmt[1,[1,2]]=1;Xqmt[4,[1,2]]=1
-    generateFakeDataHT(age=7,Ms=range(6),P=[[0,9],[9,14],[14,19],[19,28],[28,33],[33,38]],
-        Es=[1,1,1,2,2,2],Nd=[55,45,65,55,45,65],Xqmt=Xqmt,N=-1,fn='empExp')
-
+    generateFakeDataHT(age=7,Ms=range(6),P=[[0,9],[9,14],[14,19],[19,28],[28,33],[33,38]],Es=[1,1,1,2,2,2],Nd=[55,45,65,55,45,65],Xqmt=Xqmt,N=-1,fn='empExp')
+    for i in range(2): plotPowerAll('nLCP',i) #section 4
